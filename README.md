@@ -61,7 +61,9 @@ an animation.
 
 ## Quick start
 
-Install [Rust](https://rustup.rs), then:
+**Windows:** download `Hotfire.exe` from the [latest release](https://github.com/CasualArclamp/hotfire/releases/latest) and run it. It is one file with nothing to install.
+
+**From source:** install [Rust](https://rustup.rs), then:
 
 ```
 git clone https://github.com/CasualArclamp/hotfire
