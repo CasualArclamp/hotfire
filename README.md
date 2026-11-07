@@ -188,6 +188,10 @@ copy target\release\rocket_sandbox.exe hotfire\Hotfire.exe
   **Turn it off for the full simulation**: the gas exactly as the solver has it, with no plume shader, no purge cloud and no
   recolouring in the bell (a TEA-TEB start still burns green, and cold cryogenic vapour still turns to mist, since both
   come from the simulation). On a fast GPU, raise *gas steps per 1/60 s* (Simulation) so the far plume fills in.
+  The shock cells follow the textbook jet relations: the fully expanded Mach number from isentropic expansion to the air's
+  pressure, its diameter from mass conservation, and a cell length of the Prandtl-Pack form 1.306 D sqrt(M^2 - 1) (scaled
+  to match photographs of real engines, whose hot exhaust has shorter cells). The cells weaken one by one and the glow
+  dies out over about ten exit diameters, as the mixing layer closes in on the axis.
   With the plume shader on, **Mach diamonds** picks how the shock cells are drawn. The default, *Raptor reference*, is matched to
   photographs of real engines: pointed kite-shaped white diamonds at the pinches of a defined, warm-rimmed jet. The others are
   a classic bead on the axis, a rhombus chain, a shock lattice, crossed necks, nested diamonds and a compression glow.

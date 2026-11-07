@@ -449,7 +449,24 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
     let tint = vec3<f32>(r.tint_r, r.tint_g, r.tint_b);
     // how far the hot core carries: far in thin air, squashed by air rushing up into the nozzle
     let head = 1.0 / (1.0 + max(-wv, 0.0) / 100.0);
-    let Lc = 1500.0 * head * clamp(fast, 0.3, 1.5);
+    // Scales come from the exit diameter, not from absolute cells: the exhaust stays bright for a few diameters and then
+    // dies away (it used to fade over 1500 cells with a floor it never dropped below, so it ran on for ever).
+    let De = 2.0 * hw;
+    let Lc = 4.0 * De * head * clamp(fast, 0.5, 1.2);
+    // The fully expanded jet, which the exhaust becomes once it has relaxed to the air's pressure: isentropic from the
+    // stagnation pressure for its Mach number, and by mass conservation for its diameter.
+    let gam = clamp(r.gamma, 1.05, 1.67);
+    let kg = 0.5 * (gam - 1.0);
+    let pt_pa = pow(1.0 + kg * mach * mach, gam / (gam - 1.0)) * ratio;
+    let Mj = clamp(sqrt(max((pow(pt_pa, (gam - 1.0) / gam) - 1.0) / kg, 1.0)), 1.05, 6.0);
+    let Dj = De * clamp(sqrt((mach / Mj) * pow((1.0 + kg * Mj * Mj) / (1.0 + kg * mach * mach), (gam + 1.0) / (2.0 * (gam - 1.0)))), 0.6, 2.5);
+    // Prandtl-Pack shock cell length, 1.306 Dj sqrt(Mj^2 - 1): 3 to 6 exit diameters for these nozzles, against about 1.5 in
+    // photographs of real engines (hot, low-gamma exhaust and a non-uniform exit flow shorten the cells), so it is scaled
+    // by 0.45 to match them, keeping the formula's trend with Mach number and pressure ratio.
+    let Lpack = 0.45 * 1.306 * Dj * sqrt(Mj * Mj - 1.0);
+    // The cells fade as the mixing layer closes in on the axis, at the end of the supersonic core, which gets longer
+    // with Mach number (about Dj (4 + 1.5 Mj)).
+    let Lcore = Dj * (4.0 + 1.5 * Mj);
     // the outline: the first expansion (or pinch) after the exit, then a slow turbulent spread
     let lr = log(ratio);
     let th0 = clamp(0.30 * lr, -0.3, 0.95);
@@ -463,7 +480,8 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
     let under = clamp((ratio - 2.0) / 6.0, 0.0, 1.0);
     // (real cells are about 1.3 jet diameters x sqrt(M^2 - 1) long, three diameters for a Mach 2.6 nozzle; they are drawn
     // closer together here so that several fit in the simulation's height)
-    let Ls = hw * (1.5 + 0.45 * mach) * (1.0 + 1.2 * under);
+    var Ls = hw * (1.5 + 0.45 * mach) * (1.0 + 1.2 * under);
+    if (style == 6) { Ls = clamp(Lpack, 1.0 * De, 2.4 * De); }
     let ph = 6.2832 * sp / Ls + select(0.0, 2.2, style == 6); // (style 6: the pinch falls mid-diamond)
     let cells_left = mix(4.0, 1.2, under);
     let amp = clamp(0.03 + 0.22 * abs(lr), 0.0, 0.5) * exp(-sp / (Ls * cells_left)) * (1.0 - 0.8 * under);
@@ -488,7 +506,7 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
     let airf = clamp(anim[A_AIR + 1u] * 4.0, 0.25, 1.0);
     // a soft body, a bright core and a white-hot axis near the exit
     var body = smoothstep(1.25, 0.3, q);
-    if (style == 6) { body = 0.95 * smoothstep(1.03, 0.96, q) + 0.15 * smoothstep(1.0, 0.2, q); } // (a defined body with a clear edge)
+    if (style == 6) { body = 0.7 * smoothstep(1.03, 0.96, q) + 0.12 * smoothstep(1.0, 0.2, q); } // (a defined body with a clear edge)
     let core = exp(-pow(q * 1.7, 2.0));
     // (the gas leaves the bell no brighter than it was inside: the axis lights up over the first shock cell,
     // where the flow recompresses, rather than starting white-hot at the exit plane)
@@ -510,12 +528,13 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
     let c_white = exhaust_pal(0.0);
     // (style 6 has no white axis or hot core: between the diamonds the jet is a dim, translucent pink)
     var col = c_body * body * 0.85 + c_core * core * 0.8 * (0.4 + 0.6 * kindle) * select(1.0, 0.12, style == 6) + c_white * axis * select(1.0, 0.0, style == 6);
-    col = col * speck * (0.3 + 0.7 * dec);
+    col = col * speck * (0.08 + 0.92 * dec);
     // Shock diamonds, stronger the further the exit pressure is from the air's. Six ways of drawing them (see
     // world::PLUME_STYLES): sh is the white-hot light, shl the fainter light along the shock lines themselves, bodyk how
     // much of the plume's body shows (a darker body lets the diamonds stand out).
     let strength = clamp(0.25 + 0.6 * abs(lr), 0.0, 1.0);
-    let cdk = exp(-sp / (Ls * mix(7.0, 1.0, under))) * (1.0 - 0.7 * under);
+    var cdk = exp(-sp / (Ls * mix(7.0, 1.0, under))) * (1.0 - 0.7 * under);
+    if (style == 6) { cdk = exp(-sp / (3.0 * Ls)) * smoothstep(1.1 * Lcore, 0.5 * Lcore, sp); }
     let beam = exp(-pow(q * 2.4, 2.0));
     var sh = 0.0;
     var shl = 0.0;
@@ -574,7 +593,7 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
         let tear = lead * (0.78 * crisp + 0.22 * soft) + (1.0 - lead) * soft;
         let heart = exp(-pow(dx / (0.3 * wdt + 1.0), 2.0));
         let lenf = exp(-pow((t - 0.2) / select(0.3, 0.14, t < 0.2), 2.0));
-        sh = (0.8 * tear + 0.7 * heart * (0.5 + 0.5 * lead)) * lenf * strength * cdk * 2.6;
+        sh = (0.8 * tear + 0.7 * heart * (0.5 + 0.5 * lead)) * lenf * strength * cdk * 1.9;
         shl = exp(-pow((abs(dx) - 1.15 * R * pow(t / 0.75, 0.75)) / (0.025 * R + 0.7), 2.0)) * smoothstep(0.8, 0.3, t) * smoothstep(0.02, 0.1, t) * smoothstep(1.1, 0.8, q) * strength * cdk * 0.5;
         bodyk = 0.9;
     } else {
@@ -603,10 +622,12 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
     // (mixed towards white rather than added, so a diamond keeps its gradient instead of clipping to a flat patch)
     var c_dia = c_white * 1.1;
     if (style == 6) { c_dia = mix(mix(c_white, vec3<f32>(0.8, 0.86, 1.0), 0.55), vec3<f32>(1.0, 0.95, 0.8), soot) * 1.1; }
-    col = mix(col, c_dia, clamp(sh * (0.4 + 0.6 * dec), 0.0, select(0.92, 0.97, style == 6))) + c_white * md * 0.9 * (0.4 + 0.6 * dec) + mix(c_core, c_white, 0.5) * shl * (0.4 + 0.6 * dec);
+    col = mix(col, c_dia, clamp(sh * (0.4 + 0.6 * dec), 0.0, select(0.92, 0.9, style == 6))) + c_white * md * 0.9 * (0.4 + 0.6 * dec) + mix(c_core, c_white, 0.5) * shl * (0.4 + 0.6 * dec);
     // a clean flame shows less of a body (the diamonds and the hot core are what you see)
     let see = select(mix(0.45, 1.0, soot), 1.0, style == 6); // (the photographed plumes are bright whatever the fuel)
-    var rgb = col * see * fade_in * inten * airf;
+    // the luminous end of the exhaust: fully faded by about 12 exit diameters, 
+    let env = 1.0 - smoothstep(6.0 * De, 12.0 * De, sp);
+    var rgb = col * see * fade_in * inten * airf * env;
     // light thrown off into the air round the exit and along the plume. Above the exit plane it fades out
     // softly up the outside of the bell (a hard top edge here showed as a band right across the screen);
     // inside the bell the gas is drawn as it is.
@@ -615,10 +636,12 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
         up_fade = exp(s / (0.35 * hw + 6.0)) * smoothstep(hw, hw * 1.15, abs(cf.x - xc));
     }
     let halo = exp(-pow(dx / (1.4 * R + 10.0), 2.0)) * exp(-sp / (0.5 * Lc + 80.0)) * up_fade * inten * airf;
-    rgb = rgb + mix(c_body, c_core, 0.4) * halo * 0.22 * see;
+    rgb = rgb + mix(c_body, c_core, 0.4) * halo * 0.22 * see * env;
     // (the gas simulation's own picture is hidden in a wide area round the plume, up beside the nozzle too)
     var wide = smoothstep(12.0, 8.0, abs(dx) / R) * smoothstep(-170.0, -120.0, s);
     if (s < 0.0) { wide = wide * smoothstep(hw, hw * 1.1, abs(dx)); } // (not inside the bell)
+    // (the mask is not faded with the exhaust: the solver is inviscid, so its own jet stays at flame temperature all the way
+    // down the grid, which is only ever wanted through the "Stylised exhaust plume" switch)
     let mask = wide * smoothstep(0.03, 0.2, inten);
     return vec4<f32>(rgb, mask);
 }
