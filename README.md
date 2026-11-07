@@ -29,10 +29,6 @@ run it. To make a ready-to-share folder:
 ```
 mkdir hotfire
 copy target\release\rocket_sandbox.exe hotfire\Hotfire.exe
-elease
-ocket_sandbox.exe hotfire\Hotfire.exe
-elease
-ocket_sandbox.exe hotfire\Hotfire.exe
 ```
 
 - **What the target PC needs:** Windows 10 or 11 and a GPU with a Vulkan or DirectX 12 driver (any recent one; the
