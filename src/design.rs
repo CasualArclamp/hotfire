@@ -648,6 +648,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn nozzle_area_mach_and_separation() {
+        use crate::world::{area_ratio, mach_from_area, p_over_pt, SEPARATION_P};
+        // area ratio and Mach are inverses of each other, and pressure falls as the bell widens
+        for gam in [1.15f32, 1.2, 1.4] {
+            for m in [1.5f32, 2.5, 3.5, 5.0] {
+                let back = mach_from_area(area_ratio(m, gam), gam);
+                assert!((back - m).abs() < 1e-3, "gamma {gam}: Mach {m} came back as {back}");
+            }
+            assert!(p_over_pt(3.0, gam) < p_over_pt(2.0, gam));
+        }
+        // a bell of area ratio 16 on a 100 bar chamber ends at a few tenths of a bar (gamma 1.2): below 0.4 of sea-level air,
+        // so the flow would separate there, and well above 0.4 of the air at 10 km
+        let pe = 100.0e5 * p_over_pt(mach_from_area(16.0, 1.2), 1.2);
+        assert!(pe > 0.2e5 && pe < 0.8e5, "exit pressure {pe}");
+        assert!(pe > SEPARATION_P * 26_500.0, "no separation at 10 km");
+    }
+
+    #[test]
     fn save_load_roundtrip() {
         let mut a = World::new();
         a.st.prop = 2;

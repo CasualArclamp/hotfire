@@ -3562,7 +3562,7 @@ fn selftest(seconds: f32, shot: Option<String>, args: &[String]) {
     }
     if args.iter().any(|a| a == "--plumeinfo") {
         let p = w.plume;
-        println!("plume: on {} exit x {:.0} y {:.0} half-width {:.1} cells, exit speed {:.0} m/s, Pe/Pa {:.2}, Mach {:.2}, flame {:.0} K, intensity {:.2}", p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8]);
+        println!("plume: on {} exit x {:.0} y {:.0} half-width {:.1} cells, exit speed {:.0} m/s, Pe/Pa {:.2}, Mach {:.2}, flame {:.0} K, intensity {:.2}, running at {:.2}, jet half-width {:.1}, separation {:.2}", p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[14], p[15], p[16]);
     }
     if let Some(prefix) = shot {
         for (m, name) in [(6u32, "flame"), (1, "pressure"), (3, "mach"), (4, "temp")] {

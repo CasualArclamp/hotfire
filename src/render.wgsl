@@ -241,8 +241,8 @@ const A_VAP: u32 = 1856u;    // must match world::ANIM_VAP
 const A_BURN: u32 = 2112u;   // must match world::ANIM_BURN
 const A_AIR: u32 = 2121u;    // must match world::ANIM_AIR
 const A_PLUME: u32 = 2124u;  // must match world::ANIM_PLUME
-const A_TEA: u32 = 2138u;    // must match world::ANIM_TEA
-const A_NOZ: u32 = 2205u;    // must match world::ANIM_NOZ (A_TEA + 3 + 64)
+const A_TEA: u32 = 2141u;    // must match world::ANIM_TEA
+const A_NOZ: u32 = 2208u;    // must match world::ANIM_NOZ (A_TEA + 3 + 64)
 
 // what a network holds: 0 fuel, 1 oxidiser, 2 both (mixed), 9 nothing
 fn net_prop(net: u32) -> u32 {
@@ -451,15 +451,18 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
     let head = 1.0 / (1.0 + max(-wv, 0.0) / 100.0);
     // Scales come from the exit diameter, not from absolute cells: the exhaust stays bright for a few diameters and then
     // dies away (it used to fade over 1500 cells with a floor it never dropped below, so it ran on for ever).
-    let De = 2.0 * hw;
-    let Lc = 4.0 * De * head * clamp(fast, 0.5, 1.2);
+    // (the jet's width where it leaves the wall: the exit's, or the separation point's inside the bell when the flow separates)
+    let hwj = select(hw, anim[A_PLUME + 15u], anim[A_PLUME + 15u] > 1.0);
+    let De = 2.0 * hwj;
+    let fl = clamp(anim[A_PLUME + 14u], 0.05, 1.0); // how hard the engine is running (chamber pressure against its recent peak)
+    let Lc = 4.0 * De * head * clamp(fast, 0.5, 1.2) * pow(fl, 0.6);
     // The fully expanded jet, which the exhaust becomes once it has relaxed to the air's pressure: isentropic from the
     // stagnation pressure for its Mach number, and by mass conservation for its diameter.
     let gam = clamp(r.gamma, 1.05, 1.67);
     let kg = 0.5 * (gam - 1.0);
     let pt_pa = pow(1.0 + kg * mach * mach, gam / (gam - 1.0)) * ratio;
     let Mj = clamp(sqrt(max((pow(pt_pa, (gam - 1.0) / gam) - 1.0) / kg, 1.0)), 1.05, 6.0);
-    let Dj = De * clamp(sqrt((mach / Mj) * pow((1.0 + kg * Mj * Mj) / (1.0 + kg * mach * mach), (gam + 1.0) / (2.0 * (gam - 1.0)))), 0.6, 2.5);
+    let Dj = De * clamp(sqrt((mach / Mj) * pow((1.0 + kg * Mj * Mj) / (1.0 + kg * mach * mach), (gam + 1.0) / (2.0 * (gam - 1.0)))), 0.45, 2.5);
     // Prandtl-Pack shock cell length, 1.306 Dj sqrt(Mj^2 - 1): 3 to 6 exit diameters for these nozzles, against about 1.5 in
     // photographs of real engines (hot, low-gamma exhaust and a non-uniform exit flow shorten the cells), so it is scaled
     // by 0.45 to match them, keeping the formula's trend with Mach number and pressure ratio.
@@ -469,20 +472,29 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
     let Lcore = Dj * (4.0 + 1.5 * Mj);
     // the outline: the first expansion (or pinch) after the exit, then a slow turbulent spread
     let lr = log(ratio);
+    // over-expanded (exit below ambient): the jet is turned inward first and pinches at the first Mach disk; under-expanded:
+    // it bulges first. ov is 0 for the first and 1 for the second. Below about 0.4 of the air's pressure (the Summerfield
+    // criterion) the flow separates inside the bell and the jet becomes ragged and unsteady (sep).
+    let ov = smoothstep(-0.25, 0.25, lr);
+    let sep = anim[A_PLUME + 16u]; // 0..1: how far into flow separation (see world::find_plume)
+    let tj = r.time - 60.0 * floor(r.time / 60.0);
     let th0 = clamp(0.30 * lr, -0.3, 0.95);
-    let Lth = 6.0 * hw;
+    let Lth = 6.0 * hwj;
     var grow = th0 * Lth * (1.0 - exp(-sp / Lth));
     grow = max(grow, -0.4 * hw);
     if (style == 6) { grow = grow * 0.3; } // (a well-matched nozzle: the jet stays about as wide as the exit)
-    var R = hw + grow + 0.06 * sp * (0.7 + 0.3 * clamp(lr * 0.3 + 1.0, 0.3, 2.0)) * select(1.0, 0.25, style == 6);
+    var R = hwj + grow + 0.06 * sp * (0.7 + 0.3 * clamp(lr * 0.3 + 1.0, 0.3, 2.0)) * select(1.0, 0.25, style == 6);
     // shock cells along the axis
     // (a well under-expanded plume has one long first cell and then fans out smoothly, it doesn't keep repeating)
     let under = clamp((ratio - 2.0) / 6.0, 0.0, 1.0);
     // (real cells are about 1.3 jet diameters x sqrt(M^2 - 1) long, three diameters for a Mach 2.6 nozzle; they are drawn
     // closer together here so that several fit in the simulation's height)
-    var Ls = hw * (1.5 + 0.45 * mach) * (1.0 + 1.2 * under);
-    if (style == 6) { Ls = clamp(Lpack, 1.0 * De, 2.4 * De); }
-    let ph = 6.2832 * sp / Ls + select(0.0, 2.2, style == 6); // (style 6: the pinch falls mid-diamond)
+    var Ls = hwj * (1.5 + 0.45 * mach) * (1.0 + 1.2 * under);
+    if (style == 6) { Ls = clamp(Lpack, 0.5 * De, 3.0 * De); }
+    // (style 6: the cells breathe a little with the chamber's roughness, and the pinch, where the Mach disk sits, is at a quarter
+    // of a cell when over-expanded and three quarters when under-expanded)
+    let spc = sp + select(0.0, 0.03 * Ls * sin(tj * 11.0 + 2.0 * sin(tj * 3.0)), style == 6);
+    let ph = 6.2832 * spc / Ls + select(0.0, mix(3.1416, 0.0, ov), style == 6);
     let cells_left = mix(4.0, 1.2, under);
     let amp = clamp(0.03 + 0.22 * abs(lr), 0.0, 0.5) * exp(-sp / (Ls * cells_left)) * (1.0 - 0.8 * under);
     let R0 = R; // (the radius before the shock cells pinch and swell it)
@@ -491,16 +503,23 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
     if (style == 5) { ampk = 2.1; }
     if (style == 6) { ampk = 1.0; }
     R = max(R * (1.0 + clamp(amp * ampk, 0.0, 0.6) * sin(ph)), 0.3 * hw);
+    if (style == 6) {
+        // the jet relaxes from the exit's width towards that of the fully expanded jet (narrower when over-expanded, wider when
+        // under-expanded), and the cells swing about that, more the further the exhaust is from matched pressure
+        let Rb = mix(hwj, 0.5 * Dj, 1.0 - exp(-sp / (1.2 * Ls))) + 0.012 * sp;
+        let amp6 = clamp(0.05 + 0.5 * abs(log(Dj / De)), 0.04, 0.4) * exp(-sp / (3.0 * Ls)) * (1.0 - 0.5 * sep);
+        R = max(Rb * (1.0 + amp6 * sin(ph)), 0.3 * hwj);
+    }
     // turbulence: big slow eddies swing the plume sideways (more the further out), smaller ones tear its edge
     let tt = r.time - 60.0 * floor(r.time / 60.0);
     let drift = tt * (2500.0 + 6500.0 * fast);
     let w1 = fbm(vec2<f32>(3.0 + (cf.x - xc) * 0.03, (sp - drift * 0.6) * 0.012));
-    let dx = (cf.x - xc) + (w1 - 0.5) * 2.0 * (4.0 + 0.1 * sp) * smoothstep(0.0, 80.0, sp) * select(1.0, 0.12, style == 6);
+    let dx = (cf.x - xc) + (w1 - 0.5) * 2.0 * (4.0 + 0.1 * sp) * smoothstep(0.0, 80.0, sp) * select(1.0, 0.5 * (1.0 + 1.2 * sep), style == 6);
     let e1 = fbm(vec2<f32>(dx * 0.1, (sp - drift) * 0.03));
     let e2 = fbm(vec2<f32>(dx * 0.27 + 9.0, (sp - drift * 1.3) * 0.08));
     let turb = 0.6 * e1 + 0.4 * e2;
     let q0 = abs(dx) / R;
-    let q = q0 * (1.0 + (turb - 0.5) * (0.12 + 0.7 * smoothstep(0.0, 350.0, sp)) * select(1.0, 0.07, style == 6));
+    let q = q0 * (1.0 + (turb - 0.5) * (0.12 + 0.7 * smoothstep(0.0, 350.0, sp)) * select(1.0, 0.07 + 0.18 * smoothstep(0.0, 8.0 * De, sp) + 0.3 * sep, style == 6));
     let dec = exp(-sp / Lc);
     let fade_in = smoothstep(-1.0, 1.0, s); // (the exit gas carries on over the plume's first few cells: see exit_gas)
     let airf = clamp(anim[A_AIR + 1u] * 4.0, 0.25, 1.0);
@@ -579,7 +598,7 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
         // after photographs of a Raptor and a small hydrogen engine: each diamond is a kite, blue-white, with a sharp point
         // aimed back at the nozzle, widest about a third of the way along and closing more slowly, a hot white heart, and a
         // faint V of shock lines fanning from its tip to the edge of the jet
-        let t = fract(sp / Ls - 0.12); // 0 at the tip
+        let t = fract(spc / Ls - mix(0.25, 0.75, ov) + 0.28); // 0 at the tip, the widest part on the pinch
         let rise = 0.28;
         // curved sides: a sharp tip whose sides bow out to the widest point, then close gradually
         let u1 = clamp(t / rise, 0.0, 1.0);
@@ -593,7 +612,8 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
         let tear = lead * (0.78 * crisp + 0.22 * soft) + (1.0 - lead) * soft;
         let heart = exp(-pow(dx / (0.3 * wdt + 1.0), 2.0));
         let lenf = exp(-pow((t - 0.2) / select(0.3, 0.14, t < 0.2), 2.0));
-        sh = (0.8 * tear + 0.7 * heart * (0.5 + 0.5 * lead)) * lenf * strength * cdk * 1.9;
+        sh = (0.8 * tear + 0.7 * heart * (0.5 + 0.5 * lead)) * lenf * strength * cdk * 1.9 * mix(0.5, 1.0, fl);
+        sh = sh * (0.9 + 0.2 * fbm(vec2<f32>(tj * 5.0, sp * 0.01 + 3.0))); // (the diamonds shimmer)
         shl = exp(-pow((abs(dx) - 1.15 * R * pow(t / 0.75, 0.75)) / (0.025 * R + 0.7), 2.0)) * smoothstep(0.8, 0.3, t) * smoothstep(0.02, 0.1, t) * smoothstep(1.1, 0.8, q) * strength * cdk * 0.5;
         bodyk = 0.9;
     } else {
@@ -626,8 +646,8 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
     // a clean flame shows less of a body (the diamonds and the hot core are what you see)
     let see = select(mix(0.45, 1.0, soot), 1.0, style == 6); // (the photographed plumes are bright whatever the fuel)
     // the luminous end of the exhaust: fully faded by about 12 exit diameters, 
-    let env = 1.0 - smoothstep(6.0 * De, 12.0 * De, sp);
-    var rgb = col * see * fade_in * inten * airf * env;
+    let env = 1.0 - smoothstep(6.0 * De * sqrt(fl), 12.0 * De * sqrt(fl), sp);
+    var rgb = col * see * fade_in * inten * airf * env * mix(0.35, 1.0, fl);
     // light thrown off into the air round the exit and along the plume. Above the exit plane it fades out
     // softly up the outside of the bell (a hard top edge here showed as a band right across the screen);
     // inside the bell the gas is drawn as it is.
