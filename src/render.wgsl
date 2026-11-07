@@ -474,19 +474,22 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
     let q0 = abs(dx) / R;
     let q = q0 * (1.0 + (turb - 0.5) * (0.12 + 0.7 * smoothstep(0.0, 350.0, sp)));
     let dec = exp(-sp / Lc);
-    let fade_in = smoothstep(-1.0, 4.0, s);
+    let fade_in = smoothstep(-1.0, 1.0, s); // (the exit gas carries on over the plume's first few cells: see exit_gas)
     let airf = clamp(anim[A_AIR + 1u] * 4.0, 0.25, 1.0);
     // a soft body, a bright core and a white-hot axis near the exit
     let body = smoothstep(1.25, 0.3, q);
     let core = exp(-pow(q * 1.7, 2.0));
-    let axis = exp(-pow(q * 3.4, 2.0)) * exp(-sp / (Lc * 0.22));
+    // (the gas leaves the bell no brighter than it was inside: the axis lights up over the first shock cell,
+    // where the flow recompresses, rather than starting white-hot at the exit plane)
+    let kindle = smoothstep(0.0, 0.35 * Ls, sp);
+    let axis = exp(-pow(q * 3.4, 2.0)) * exp(-sp / (Lc * 0.22)) * (0.2 + 0.8 * kindle);
     let speck = 0.7 + 0.6 * turb;
     // colour: orange body, yellow core, white axis; a clean flame (hydrogen) is a thin pale tint instead
     let up = 0.45 + 0.55 * smoothstep(0.0, 1.0, sp / (0.7 * Lc));
     let c_body = exhaust_pal(up);
     let c_core = exhaust_pal(max(up - 0.25, 0.0));
     let c_white = exhaust_pal(0.0);
-    var col = c_body * body * 0.85 + c_core * core * 0.8 + c_white * axis * 1.0;
+    var col = c_body * body * 0.85 + c_core * core * 0.8 * (0.4 + 0.6 * kindle) + c_white * axis * 1.0;
     col = col * speck * (0.3 + 0.7 * dec);
     // shock diamonds: bright beads on the axis, stronger the further from matched pressure
     let dia = pow(0.5 + 0.5 * cos(ph), 5.0) * clamp(0.25 + 0.6 * abs(lr), 0.0, 1.0) * exp(-sp / (Ls * mix(7.0, 1.0, under))) * (1.0 - 0.7 * under);
@@ -500,14 +503,53 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
     // a clean flame shows less of a body (the diamonds and the hot core are what you see)
     let see = mix(0.45, 1.0, soot);
     var rgb = col * see * fade_in * inten * airf;
-    // light thrown off into the air round the exit and along the plume
-    let halo = exp(-pow(dx / (2.2 * R + 10.0), 2.0)) * exp(-sp / (0.5 * Lc + 80.0)) * fade_in * inten * airf;
+    // light thrown off into the air round the exit and along the plume. Above the exit plane it fades out
+    // softly up the outside of the bell (a hard top edge here showed as a band right across the screen);
+    // inside the bell the gas is drawn as it is.
+    var up_fade = 1.0;
+    if (s < 0.0) {
+        up_fade = exp(s / (0.35 * hw + 6.0)) * smoothstep(hw, hw * 1.15, abs(cf.x - xc));
+    }
+    let halo = exp(-pow(dx / (1.4 * R + 10.0), 2.0)) * exp(-sp / (0.5 * Lc + 80.0)) * up_fade * inten * airf;
     rgb = rgb + mix(c_body, c_core, 0.4) * halo * 0.22 * see;
     // (the gas simulation's own picture is hidden in a wide area round the plume, up beside the nozzle too)
     var wide = smoothstep(12.0, 8.0, abs(dx) / R) * smoothstep(-170.0, -120.0, s);
     if (s < 0.0) { wide = wide * smoothstep(hw, hw * 1.1, abs(dx)); } // (not inside the bell)
     let mask = wide * smoothstep(0.03, 0.2, inten);
     return vec4<f32>(rgb, mask);
+}
+
+// The hot gas inside the bell drawn in the plume's palette, from the throat (ub 0) to the exit (ub 1), keeping
+// the brightness the flame view gave it.
+fn bell_tint(col: vec3<f32>, ub: f32) -> vec3<f32> {
+    let lum = clamp(dot(col, vec3<f32>(0.35, 0.5, 0.15)) * 1.15, 0.0, 1.2);
+    return mix(col, exhaust_pal(0.05 + 0.4 * ub) * lum, 0.9);
+}
+
+// The gas near the bell's exit at column xs, as the flame view draws it there (its texture still running with
+// the flow at this point): the exhaust just past the exit plane looks like this before the plume takes over.
+// w is how much of it to show (0 where that cell is not hot exhaust).
+fn exit_gas(cf: vec2<f32>, xs: f32, ye: f32) -> vec4<f32> {
+    let iy = u32(max(ye - 2.0, 0.0)); // (the row before the last: see the shock line note where this is used)
+    // (three cells across, so one row of the simulation drawn out downwards doesn't show as streaks)
+    var acc = vec3<f32>(0.0);
+    var n = 0.0;
+    for (var k = -1; k <= 1; k = k + 1) {
+        let ix = u32(clamp(xs + 2.0 * f32(k), 0.0, f32(r.w) - 1.0));
+        let j = iy * r.w + ix;
+        if ((mat[j] & 255u) != 0u) { continue; }
+        let U = st[j];
+        let rho = max(U.x, 1e-6);
+        let vel = vec2<f32>(U.y, U.z) / rho;
+        let e = max(U.w / rho - 0.5 * dot(vel, vel), 1.0);
+        let T = e * (r.gamma - 1.0) / r.rgas;
+        if (T < 1300.0) { continue; }
+        acc = acc + flame(j, ix, iy, rho, T, vel, cf);
+        n = n + 1.0;
+    }
+    if (n < 0.5) { return vec4<f32>(0.0); }
+    let c = acc / n + glow_at(vec2<f32>(cf.x, ye - 0.5));
+    return vec4<f32>(bell_tint(c, 1.0), n / 3.0);
 }
 
 fn h11(x: f32) -> f32 {
@@ -845,8 +887,30 @@ fn fs(in: VOut) -> @location(0) vec4<f32> {
             let Ti = ei * (r.gamma - 1.0) / r.rgas;
             if (cf.y > yt + 2.0 && cf.y < ye && Ti > 1300.0) {
                 let ub = clamp((cf.y - yt) / max(ye - yt, 1.0), 0.0, 1.0);
-                let lum = clamp(dot(col, vec3<f32>(0.35, 0.5, 0.15)) * 1.15, 0.0, 1.2);
-                col = mix(col, exhaust_pal(0.05 + 0.4 * ub) * lum, 0.9);
+                col = bell_tint(col, ub);
+            }
+        }
+        // just past the exit plane the gas leaving the bell carries on as it was and hands over to the plume:
+        // no seam where the bell ends. An under-expanded jet fans out as it leaves, so the exit gas is drawn
+        // spreading and thinning, and handed over more slowly (in vacuum the bell is far brighter than the
+        // faint plume). It covers the bell's last row too, where the flame view draws the step down to the
+        // outside air as a bright shock line.
+        if (anim[A_PLUME] > 0.5 && anim[A_PLUME + 8u] > 0.03) {
+            let xc = anim[A_PLUME + 1u];
+            let ye = anim[A_PLUME + 2u];
+            let hw = max(anim[A_PLUME + 3u], 3.0);
+            let spread = clamp(0.3 * log(clamp(anim[A_PLUME + 5u], 0.03, 300.0)), 0.0, 0.95);
+            let s = cf.y - ye;
+            let sp = max(s, 0.0);
+            let widen = 1.0 + spread * sp / hw;
+            let ax = (cf.x - xc) / widen;
+            let reach = hw * (0.6 + 0.4 * spread) + 4.0;
+            if (s >= -1.0 && s < reach && abs(ax) < hw) {
+                let ex = exit_gas(cf, xc + ax, ye);
+                // (fading from the exit plane on, with no plateau, so where the exit gas is dark (the cooler,
+                // thinner middle of an over-expanded jet) the plume's core comes up through it gradually)
+                let k = ex.w * pow(1.0 - sp / reach, 2.0) * smoothstep(hw, 0.8 * hw, abs(ax));
+                col = mix(col, ex.rgb / widen, k);
             }
         }
         col = col + burner_jets(cf);
