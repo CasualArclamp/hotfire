@@ -552,6 +552,34 @@ fn exit_gas(cf: vec2<f32>, xs: f32, ye: f32) -> vec4<f32> {
     return vec4<f32>(bell_tint(c, 1.0), n / 3.0);
 }
 
+// The cold-gas purge at the start: before the fuel valves open, inert gas at room temperature is blown through the
+// injectors and out of the bell. Cold, it condenses the air's moisture into a white cloud that spreads wide as it
+// leaves the nozzle and billows downwards. rgb is the cloud's colour, a is how much of the old picture it covers.
+fn purge_cloud(cf: vec2<f32>) -> vec4<f32> {
+    let vis = anim[A_PLUME + 10u];
+    if (anim[A_PLUME] < 0.5 || vis < 0.02) { return vec4<f32>(0.0); }
+    let xc = anim[A_PLUME + 1u];
+    let ye = anim[A_PLUME + 2u];
+    let hw = max(anim[A_PLUME + 3u], 3.0);
+    let s = cf.y - ye;
+    if (s < -2.0) { return vec4<f32>(0.0); }
+    let sp = max(s, 0.0);
+    let dx = cf.x - xc;
+    let tt = r.time - 60.0 * floor(r.time / 60.0);
+    // (wide and soft: the gas is slow and cold, so it spreads instead of streaking like the exhaust)
+    let R = hw * (0.9 + 0.55 * sqrt(sp / hw)) + 0.22 * sp;
+    let n1 = fbm(vec2<f32>(dx * 0.05, (sp - tt * 240.0) * 0.028));
+    let n2 = fbm(vec2<f32>(dx * 0.13 + 5.0, (sp - tt * 380.0) * 0.07));
+    let n = 0.6 * n1 + 0.4 * n2;
+    let q = abs(dx) / R * (1.0 + (n - 0.5) * 0.9);
+    let dens = smoothstep(1.05, 0.1, q) * exp(-sp / (4.2 * hw)) * (0.4 + 1.0 * n);
+    // (it is the air's moisture condensing on the cold gas, so in thin air or vacuum only a faint haze of the gas itself is left)
+    let moist = mix(0.2, 1.0, clamp(anim[A_AIR + 1u] * 4.0, 0.0, 1.0));
+    let a = clamp(dens * 1.25, 0.0, 0.92) * vis * moist * smoothstep(-2.0, 2.0, s);
+    let c = mix(vec3<f32>(0.55, 0.66, 0.84), vec3<f32>(0.97, 0.98, 1.0), smoothstep(0.15, 0.7, dens)) * (0.6 + 0.5 * n);
+    return vec4<f32>(c, a);
+}
+
 fn h11(x: f32) -> f32 {
     return fract(sin(x * 127.1 + 311.7) * 43758.5453);
 }
@@ -869,6 +897,8 @@ fn fs(in: VOut) -> @location(0) vec4<f32> {
     if ((r.mode == 6u || r.mode == 0u) && (mat[i] & 255u) == 0u) {
         let pl = plume(cf);
         col = col * (1.0 - 0.95 * pl.a) + pl.rgb;
+        let pc = purge_cloud(cf);
+        col = mix(col, pc.rgb, pc.a);
         // TEA-TEB burns green: a flash round the injector it sprays into
         let tea_k = anim[A_TEA + 2u];
         if (tea_k > 0.01) {
@@ -912,6 +942,14 @@ fn fs(in: VOut) -> @location(0) vec4<f32> {
                 let k = ex.w * pow(1.0 - sp / reach, 2.0) * smoothstep(hw, 0.8 * hw, abs(ax));
                 col = mix(col, ex.rgb / widen, k);
             }
+        }
+        // TEA-TEB lights green (boron): for the first moments of the start the whole flame, in the chamber, the bell
+        // and the plume, burns green and white-hot before it settles to its own colour, as a Merlin's does
+        let gk = clamp(anim[A_PLUME + 11u] * 1.3, 0.0, 1.0);
+        if (gk > 0.01 && anim[A_PLUME] > 0.5 && abs(cf.x - anim[A_PLUME + 1u]) < 8.0 * max(anim[A_PLUME + 3u], 3.0)) {
+            let lum = clamp(dot(col, vec3<f32>(0.35, 0.5, 0.15)) * 1.3, 0.0, 1.6);
+            let green = vec3<f32>(0.1, 1.0, 0.28) * lum + vec3<f32>(0.5, 1.0, 0.65) * pow(lum, 3.0) * 0.4;
+            col = mix(col, green, gk * smoothstep(0.04, 0.35, lum));
         }
         col = col + burner_jets(cf);
     }

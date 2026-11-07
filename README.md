@@ -19,7 +19,8 @@ an animation.
 - **Ten presets to start from**: Merlin 1D, F-1, J-2, RL10, Rutherford, a hydrolox expander, hydrolox staged
   combustion, a hydrolox gas generator that exhausts into the nozzle, a pressure-fed hypergolic engine and a
   tripropellant engine.
-- **Light it properly**: start cartridge, helium spin start, TEA-TEB igniter or a dead-head tank-pressure start.
+- **Light it properly**: a cold-gas purge cloud, then start cartridge, helium spin start, TEA-TEB igniter (with its green
+  flash) or a dead-head tank-pressure start.
   Valves have stroke times and the liquid in the lines has inertia, so slam a valve and you get water hammer.
 - **Fly it**: launch off the pad, climb through the standard atmosphere, or drop a stage tail-first from 6 km and try to
   land it on its engine.
@@ -29,6 +30,17 @@ an animation.
   Vulkan or DirectX 12 driver; Linux and macOS should build too (untested).
 
 ## Gallery
+
+### The start
+
+A start runs the way a real one does. First a cold-gas purge blows inert gas through the injectors, and where there is air it
+condenses into a white cloud at the nozzle exit. Then the fuel primes the lines and the TEA-TEB igniter lights on contact:
+the chamber, bell and plume burn green and white-hot for the first second, then settle to the propellant's own flame
+(a Merlin-style start).
+
+<p align="center"><img src="docs/images/start-sequence.jpg" width="900" alt="Start-up: the white purge cloud thinning, the green TEA-TEB ignition building up the plume, then the orange full-thrust flame"></p>
+
+### Engines
 
 <table>
   <tr>

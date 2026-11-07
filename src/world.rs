@@ -40,7 +40,7 @@ pub const ANIM_BOIL: usize = ANIM_HE + MAX_BLOCKS; // per-network boiling intens
 pub const ANIM_VAP: usize = ANIM_BOIL + 256; // per-network ullage vapour density for drawing (0..1)
 pub const ANIM_BURN: usize = ANIM_VAP + 256; // the burner blocks: how many (up to 8), then their block numbers
 pub const ANIM_AIR: usize = ANIM_BURN + 9; // the wind past the vehicle (m/s down the screen), ambient density against sea level
-pub const ANIM_PLUME: usize = ANIM_AIR + 3; // the stylised exhaust plume: on, exit x, exit y, half width, exit speed, Pe/Pa, Mach, flame temperature, intensity
+pub const ANIM_PLUME: usize = ANIM_AIR + 3; // the stylised exhaust plume: on, exit x, exit y, half width, exit speed, Pe/Pa, Mach, flame temperature, intensity, throat y, purge cloud, green TEA-TEB exhaust glow
 pub const ANIM_TEA: usize = ANIM_PLUME + 12; // the TEA-TEB flash (x, y, how bright), then 1 for each bottle that holds TEA-TEB
 pub const ANIM_LEN: usize = ANIM_TEA + 3 + 64; // line flow phases, rotor blocks, tank levels, liquid fronts, contents, helium, burners
 pub const DRY: f32 = 1.0e6; // phase of line cells no tank can reach
@@ -980,6 +980,8 @@ pub struct World {
     pub mix_k: f32,         // mixture control: above 1 the fuel throttle valves close down, below 1 the oxidiser ones
     pub teateb_flash: f32,   // a TEA-TEB injection is burning: 1 at the start, dying away over a second or two
     pub teateb_at: usize,    // ... in this gas cell
+    pub tea_age: f32,        // seconds since the TEA-TEB first reached an injector (the exhaust burns green for the first second or so)
+    pub purge_vis: f32,      // the cold-gas purge cloud at the nozzle exit (0..1): rises while the start purge runs, thins away after it
     pub fx_plume: bool,     // draw the exhaust as a plume shader (off: just the gas simulation's own picture)
     pub plume: [f32; 12],   // what the plume shader needs (see ANIM_PLUME)
     pub air_phase: f32,     // how far the air streaks have travelled (adds up the wind, so a change of speed never makes them jump)
@@ -1079,6 +1081,8 @@ impl World {
             soft_t: 0.0,
             teateb_flash: 0.0,
             teateb_at: 0,
+            tea_age: 99.0,
+            purge_vis: 0.0,
             fx_plume: true,
             plume: [0.0; 12],
             air_phase: 0.0,
@@ -2943,8 +2947,15 @@ impl World {
         // altitude: climbing raises it, and it sets the ambient pressure (down to what the gas solver can hold)
         let dt_sim = dt * self.st.lumped_rate;
         self.teateb_flash = (self.teateb_flash - dt_sim / 1.6).max(0.0);
+        self.tea_age += dt_sim;
         self.air_phase = (self.air_phase + self.wind() / 250.0 * dt) % 2000.0;
+        // the start purge shows as a white cloud of cold gas at the nozzle exit: quick to build, slow to clear
+        let purge_to = if self.purge_t > 0.0 { 1.0 } else { 0.0 };
+        let purge_rate = if purge_to > self.purge_vis { 1.0 / 0.4 } else { 1.0 / 1.8 };
+        self.purge_vis += (purge_to - self.purge_vis).clamp(-purge_rate * dt_sim, purge_rate * dt_sim);
         self.plume = self.find_plume(rb);
+        self.plume[10] = self.purge_vis;
+        self.plume[11] = ((2.4 - self.tea_age) / 1.3).clamp(0.0, 1.0); // green exhaust glow: full for the first 1.1 s (the plume takes about that long to build), gone by 2.4 s
         if self.flight {
             self.fly(dt_sim);
             self.alt_on = true;
@@ -3639,6 +3650,9 @@ impl World {
             if let Some(gc) = tea_flow {
                 // pyrophoric: whatever it sprays into lights, in a green flash
                 self.spark_t = self.spark_t.max(0.4);
+                if self.teateb_flash <= 0.01 {
+                    self.tea_age = 0.0; // a fresh injection, not the valve still being open
+                }
                 self.teateb_flash = 1.0;
                 self.teateb_at = gc;
                 self.gas_paint.push((gc, 2));
