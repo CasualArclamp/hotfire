@@ -28,7 +28,9 @@ run it. To make a ready-to-share folder:
 
 ```
 mkdir hotfire
-copy targeteleaseocket_sandbox.exe hotfire\Hotfire.exe
+copy target\release\rocket_sandbox.exe hotfire\Hotfire.exe
+elease
+ocket_sandbox.exe hotfire\Hotfire.exe
 elease
 ocket_sandbox.exe hotfire\Hotfire.exe
 ```
