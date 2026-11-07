@@ -471,24 +471,24 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
     var ampk = 1.0;
     if (style == 3) { ampk = 1.7; }
     if (style == 5) { ampk = 2.1; }
-    if (style == 6) { ampk = 1.4; }
+    if (style == 6) { ampk = 1.0; }
     R = max(R * (1.0 + clamp(amp * ampk, 0.0, 0.6) * sin(ph)), 0.3 * hw);
     // turbulence: big slow eddies swing the plume sideways (more the further out), smaller ones tear its edge
     let tt = r.time - 60.0 * floor(r.time / 60.0);
     let drift = tt * (2500.0 + 6500.0 * fast);
     let w1 = fbm(vec2<f32>(3.0 + (cf.x - xc) * 0.03, (sp - drift * 0.6) * 0.012));
-    let dx = (cf.x - xc) + (w1 - 0.5) * 2.0 * (4.0 + 0.1 * sp) * smoothstep(0.0, 80.0, sp);
+    let dx = (cf.x - xc) + (w1 - 0.5) * 2.0 * (4.0 + 0.1 * sp) * smoothstep(0.0, 80.0, sp) * select(1.0, 0.12, style == 6);
     let e1 = fbm(vec2<f32>(dx * 0.1, (sp - drift) * 0.03));
     let e2 = fbm(vec2<f32>(dx * 0.27 + 9.0, (sp - drift * 1.3) * 0.08));
     let turb = 0.6 * e1 + 0.4 * e2;
     let q0 = abs(dx) / R;
-    let q = q0 * (1.0 + (turb - 0.5) * (0.12 + 0.7 * smoothstep(0.0, 350.0, sp)) * select(1.0, 0.35, style == 6));
+    let q = q0 * (1.0 + (turb - 0.5) * (0.12 + 0.7 * smoothstep(0.0, 350.0, sp)) * select(1.0, 0.07, style == 6));
     let dec = exp(-sp / Lc);
     let fade_in = smoothstep(-1.0, 1.0, s); // (the exit gas carries on over the plume's first few cells: see exit_gas)
     let airf = clamp(anim[A_AIR + 1u] * 4.0, 0.25, 1.0);
     // a soft body, a bright core and a white-hot axis near the exit
     var body = smoothstep(1.25, 0.3, q);
-    if (style == 6) { body = 0.95 * smoothstep(1.05, 0.9, q) + 0.15 * smoothstep(1.0, 0.2, q); } // (a defined body with a clear edge)
+    if (style == 6) { body = 0.95 * smoothstep(1.03, 0.96, q) + 0.15 * smoothstep(1.0, 0.2, q); } // (a defined body with a clear edge)
     let core = exp(-pow(q * 1.7, 2.0));
     // (the gas leaves the bell no brighter than it was inside: the axis lights up over the first shock cell,
     // where the flow recompresses, rather than starting white-hot at the exit plane)
@@ -562,13 +562,20 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
         // faint V of shock lines fanning from its tip to the edge of the jet
         let t = fract(sp / Ls - 0.12); // 0 at the tip
         let rise = 0.28;
-        let wf = select(1.0 - clamp((t - rise) / 0.42, 0.0, 1.0), t / rise, t < rise);
+        // curved sides: a sharp tip whose sides bow out to the widest point, then close gradually
+        let u1 = clamp(t / rise, 0.0, 1.0);
+        let wf = select(1.0 - pow(clamp((t - rise) / 0.42, 0.0, 1.0), 1.6), u1 * (2.0 - u1), t < rise);
         let wdt = 0.62 * R * wf;
-        let tear = smoothstep(wdt + 1.0, wdt * 0.35, abs(dx)) * step(0.001, wf);
+        let ed = max(0.9, 0.035 * wdt);
+        let crisp = smoothstep(wdt, wdt - ed, abs(dx)) * step(0.001, wf);
+        let soft = smoothstep(wdt + 0.12 * R, wdt * 0.3, abs(dx)) * step(0.001, wf);
+        // (only the leading half is sharp: the tail fades out softly, as in the photographs)
+        let lead = smoothstep(rise + 0.06, rise - 0.06, t);
+        let tear = lead * (0.78 * crisp + 0.22 * soft) + (1.0 - lead) * soft;
         let heart = exp(-pow(dx / (0.3 * wdt + 1.0), 2.0));
-        let lenf = exp(-pow((t - 0.24) / 0.22, 2.0));
-        sh = (0.8 * tear + 0.7 * heart * tear) * lenf * strength * cdk * 2.6;
-        shl = exp(-pow((abs(dx) - 1.5 * R * t) / (0.05 * R + 1.0), 2.0)) * smoothstep(0.8, 0.3, t) * smoothstep(0.02, 0.1, t) * smoothstep(1.1, 0.8, q) * strength * cdk * 0.35;
+        let lenf = exp(-pow((t - 0.2) / select(0.3, 0.14, t < 0.2), 2.0));
+        sh = (0.8 * tear + 0.7 * heart * (0.5 + 0.5 * lead)) * lenf * strength * cdk * 2.6;
+        shl = exp(-pow((abs(dx) - 1.15 * R * pow(t / 0.75, 0.75)) / (0.025 * R + 0.7), 2.0)) * smoothstep(0.8, 0.3, t) * smoothstep(0.02, 0.1, t) * smoothstep(1.1, 0.8, q) * strength * cdk * 0.5;
         bodyk = 0.9;
     } else {
         // compression glow: no drawn shapes, the light follows the gas density as the jet pinches and swells, with the

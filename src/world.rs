@@ -3,7 +3,9 @@
 //! The gas and wall thermal fields themselves live on the GPU (see gpu.rs).
 
 pub const W: usize = 640; // 6.4 m at 1 cm cells
-pub const H: usize = 768;
+pub const H: usize = 1536; // twice the original 768 rows: room below the engine for a long plume
+/// How many rows the default camera shows (the top of the grid, where the engines are built).
+pub const VIEW_ROWS: usize = 768;
 pub const N: usize = W * H;
 pub const DX0: f32 = 0.01; // default metres per cell
 pub const DT0: f32 = 1.2e-6; // solver step at DX0; scales with cell size (constant CFL)

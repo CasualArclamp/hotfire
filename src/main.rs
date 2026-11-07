@@ -194,7 +194,7 @@ impl App {
         App {
             world: World::new(),
             rb: Readback::default(),
-            view_c: egui::vec2(W as f32 / 2.0, H as f32 / 2.0),
+            view_c: egui::vec2(W as f32 / 2.0, world::VIEW_ROWS as f32 / 2.0),
             scale: 0.0,
             mode: 6,
             show_heat: true,
@@ -2089,7 +2089,7 @@ impl eframe::App for App {
             let field_slot = painter.add(egui::Shape::Noop);
             let rect = resp.rect;
             if self.scale == 0.0 {
-                self.scale = rect.height() / H as f32;
+                self.scale = rect.height() / world::VIEW_ROWS as f32;
             }
             let ppp = ui.ctx().pixels_per_point();
             let to_cell = |p: egui::Pos2, view_c: egui::Vec2, scale: f32| -> egui::Vec2 { view_c + (p - rect.center()) / scale };
@@ -3455,7 +3455,7 @@ fn selftest(seconds: f32, shot: Option<String>, args: &[String]) {
                         args[p + 2].parse().unwrap_or(192.0) + presets::PRESET_OY as f32,
                         args[p + 3].parse().unwrap_or(2.6),
                     ),
-                    None => (W as f32 / 2.0, H as f32 / 2.0, 1000.0 / H as f32),
+                    None => (W as f32 / 2.0, world::VIEW_ROWS as f32 / 2.0, 1000.0 / world::VIEW_ROWS as f32),
                 };
                 shoot(&device, &queue, &mut gpu, &mut w, arg("--gifmode").unwrap_or(6.0) as u32, &format!("{gp}_{k:04}.png"), view);
             }
@@ -3572,7 +3572,7 @@ fn selftest(seconds: f32, shot: Option<String>, args: &[String]) {
                     args[p + 2].parse().unwrap_or(192.0) + presets::PRESET_OY as f32,
                     args[p + 3].parse().unwrap_or(2.6),
                 ),
-                None => (W as f32 / 2.0, H as f32 / 2.0, 1000.0 / H as f32),
+                None => (W as f32 / 2.0, world::VIEW_ROWS as f32 / 2.0, 1000.0 / world::VIEW_ROWS as f32),
             };
             shoot(&device, &queue, &mut gpu, &mut w, m, &format!("{prefix}_{name}.png"), view);
         }

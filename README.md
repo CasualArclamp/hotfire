@@ -99,8 +99,10 @@ cargo test                                           # plumbing, turbopump, valv
 ```
 Other self-test flags: `--nbskirt [--nbexp R --nblen N]` (niobium skirt on the exit), `--vac`, `--hethruster`, `--coldgas --brushhole --patchlate` (patch a punctured bottle), `--prop N` (0 LH2, 1 CH4, 2 RP-1, 3 MMH/N2O4), `--axi`, `--pf`, `--pc BAR`, `--gg`, `--nojacket`, `--gif PREFIX [--gifstart F --gifevery N --gifn COUNT --view X Y SCALE]` (a numbered flame-view PNG every N frames, for the animation above).
 
-Simulation space: 640 x 768 cells (6.4 m x 7.7 m at 1 cm cells); presets are centred near the top so the
-plume has room. About 3500 gas steps per second on an RTX 3050 laptop GPU.
+Simulation space: 640 x 1536 cells (6.4 m x 15.4 m at 1 cm cells); presets are built near the top so the
+plume has 15 m to run down (the camera starts on the top 768 rows: scroll down to follow the exhaust). Designs saved
+when the grid was 768 rows tall still load, with the new rows empty. The taller grid costs about twice the GPU time
+while a plume is running. About 3500 gas steps per second on an RTX 3050 laptop GPU.
 
 ## Portable build
 

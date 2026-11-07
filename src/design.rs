@@ -397,7 +397,13 @@ impl World {
             st.tank_p_f = old_he;
             st.tank_p_o = old_he;
         }
-        let [mut cells, mut back, mut front, fluid] = grids;
+        let [mut cells, mut back, mut front, mut fluid] = grids;
+        // designs saved when the grid was shorter (the same width, fewer rows) load with the new rows below left empty
+        for g in [&mut cells, &mut back, &mut front, &mut fluid] {
+            if !g.is_empty() && g.len() < N && g.len() % W == 0 {
+                g.resize(N, 0);
+            }
+        }
         self.fluid = if fluid.len() == N { fluid } else { vec![0; N] };
         for g in [&mut cells, &mut back, &mut front] {
             for v in g.iter_mut() {
