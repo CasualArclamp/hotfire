@@ -12,6 +12,7 @@ use eframe::egui;
 use eframe::egui_wgpu;
 use eframe::wgpu;
 use gpu::{FieldCallback, FrameInput, GpuSim, RenderParams, SimParams};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 use world::{c, gas_p, PumpRef, Readback, Shaft, World, H, NO_NET, PROPS, W};
@@ -713,7 +714,7 @@ impl App {
 
     fn side_panel(&mut self, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.heading("Rocket Sandbox");
+            ui.heading("Hotfire");
 
             egui::CollapsingHeader::new("Engine").default_open(true).show(ui, |ui| {
                 ui.label(egui::RichText::new("Start, shutdown, igniter and throttle are in the engine panel on the right.").small().weak());
@@ -2686,6 +2687,9 @@ fn paint_states(w: &mut World, rb: &Readback) -> Vec<(usize, [f32; 4], f32)> {
         .collect()
 }
 
+/// Animation clock for `shoot` (f32 bits); `SHOT_TIME` in the environment overrides it. The GIF capture steps it per frame.
+static SHOT_TIME: AtomicU32 = AtomicU32::new(0x3f80_0000); // 1.0
+
 fn shoot(device: &wgpu::Device, queue: &wgpu::Queue, gpu: &mut GpuSim, w: &mut World, mode: u32, path: &str, view: (f32, f32, f32)) {
     let (tw, th) = (1024u32, 1000u32);
     let mat: Vec<u32> = (0..world::N).map(|i| w.gpu_mat(i)).collect();
@@ -2718,7 +2722,7 @@ fn shoot(device: &wgpu::Device, queue: &wgpu::Queue, gpu: &mut GpuSim, w: &mut W
             rh: th as f32,
             rgas: pr.rgas,
             particles: (mode != 6) as u32,
-            time: std::env::var("SHOT_TIME").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0),
+            time: std::env::var("SHOT_TIME").ok().and_then(|v| v.parse().ok()).unwrap_or_else(|| f32::from_bits(SHOT_TIME.load(Ordering::Relaxed))),
             tint: pr.tint,
             soot: pr.soot,
             liq_f: pr.liq_f, liq_o: pr.liq_o, edit_layer: 0, amb_rho: w.st.amb_p / (pr.rgas * 300.0), _q: [0.0; 3],
@@ -3420,6 +3424,27 @@ fn selftest(seconds: f32, shot: Option<String>, args: &[String]) {
         }
         t_rb += tq.elapsed().as_secs_f32();
         frame += 1;
+        // --gif PREFIX [--gifstart F] [--gifevery N] [--gifn COUNT] [--gifmode M]: a flame-view PNG every N frames from frame F
+        // (for the README's animation; ffmpeg turns the numbered files into a GIF). Stops once COUNT are saved.
+        if let Some(gp) = args.iter().position(|a| a == "--gif").and_then(|p| args.get(p + 1)) {
+            let (g0, ge, gn) = (arg("--gifstart").unwrap_or(0.0) as u32, (arg("--gifevery").unwrap_or(4.0) as u32).max(1), arg("--gifn").unwrap_or(60.0) as u32);
+            if frame >= g0 && (frame - g0) % ge == 0 {
+                let k = (frame - g0) / ge;
+                if k >= gn {
+                    break;
+                }
+                SHOT_TIME.store((frame as f32 / 60.0 % 1000.0).to_bits(), Ordering::Relaxed);
+                let view = match args.iter().position(|a| a == "--view") {
+                    Some(p) => (
+                        args[p + 1].parse().unwrap_or(128.0) + presets::PRESET_OX as f32,
+                        args[p + 2].parse().unwrap_or(192.0) + presets::PRESET_OY as f32,
+                        args[p + 3].parse().unwrap_or(2.6),
+                    ),
+                    None => (W as f32 / 2.0, H as f32 / 2.0, 1000.0 / H as f32),
+                };
+                shoot(&device, &queue, &mut gpu, &mut w, arg("--gifmode").unwrap_or(6.0) as u32, &format!("{gp}_{k:04}.png"), view);
+            }
+        }
         let el = t0.elapsed().as_secs_f32();
         if el - last_print > arg("--every").unwrap_or(1.0) {
             last_print = el;
@@ -3535,6 +3560,23 @@ fn selftest(seconds: f32, shot: Option<String>, args: &[String]) {
     }
 }
 
+/// The main window: size, title and the icon (assets/icon.png, built into the exe).
+fn window_viewport() -> egui::ViewportBuilder {
+    let mut vp = egui::ViewportBuilder::default().with_inner_size([1500.0, 950.0]).with_title("Hotfire");
+    let mut dec = png::Decoder::new(std::io::Cursor::new(include_bytes!("../assets/icon.png").as_slice()));
+    dec.set_transformations(png::Transformations::EXPAND);
+    if let Ok(mut rd) = dec.read_info() {
+        let mut buf = vec![0u8; rd.output_buffer_size().unwrap_or(0)];
+        if let Ok(info) = rd.next_frame(&mut buf) {
+            if info.color_type == png::ColorType::Rgba && info.bit_depth == png::BitDepth::Eight {
+                buf.truncate(info.buffer_size());
+                vp = vp.with_icon(egui::IconData { rgba: buf, width: info.width, height: info.height });
+            }
+        }
+    }
+    vp
+}
+
 fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().collect();
     if let Some(p) = args.iter().position(|a| a == "--selftest") {
@@ -3545,11 +3587,11 @@ fn main() -> eframe::Result {
     }
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
-        viewport: egui::ViewportBuilder::default().with_inner_size([1500.0, 950.0]).with_title("Rocket Sandbox"),
+        viewport: window_viewport(),
         ..Default::default()
     };
     eframe::run_native(
-        "Rocket Sandbox",
+        "Hotfire",
         options,
         Box::new(|cc| {
             let rs = cc.wgpu_render_state.as_ref().expect("wgpu render state");

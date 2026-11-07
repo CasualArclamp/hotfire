@@ -2,3 +2,5 @@
 /target_test
 /shots
 *.bak
+/hotfire/
+*.exe
