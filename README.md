@@ -1,6 +1,79 @@
-# Hotfire
+<p align="center"><img src="assets/icon_512.png" width="120" alt="Hotfire icon"></p>
 
-*Build it. Light it. Land it.* A rocket-engine sandbox: build a liquid-fuel engine cell by cell (Powder Toy style), plumb it, light it on a start cartridge, helium or TEA-TEB, and fly it.
+<h1 align="center">Hotfire</h1>
+
+<p align="center"><em>Build it. Light it. Land it.</em><br>
+A liquid rocket engine sandbox: paint an engine cell by cell, plumb it, light it, and watch a real gas simulation do the rest.</p>
+
+<p align="center"><img src="docs/images/hotfire-merlin.gif" width="520" alt="A Merlin-style engine starting up, running at full thrust and shutting down"></p>
+
+Build a liquid-fuel engine the way you would build in The Powder Toy: paint the chamber, throat and bell, run the
+cooling jacket, plumb the tanks, valves, pumps and injectors, then light it on a start cartridge, helium or TEA-TEB
+and see what happens. The exhaust is a compressible gas simulation running on your GPU, so shock diamonds, an
+over-expanded plume pinching in, a burnt-through wall and a cavitating pump all come out of the physics, not out of
+an animation.
+
+- **Build anything**: steel, copper liner and niobium walls, pipes on three layers, valves, throttle valves,
+  regulators, tanks, helium and TEA-TEB bottles, turbopumps sized like real hardware, gas generators and burners,
+  electric pumps and batteries. Copy, paste, stamp and undo. Save your designs.
+- **Ten presets to start from**: Merlin 1D, F-1, J-2, RL10, Rutherford, a hydrolox expander, hydrolox staged
+  combustion, a hydrolox gas generator that exhausts into the nozzle, a pressure-fed hypergolic engine and a
+  tripropellant engine.
+- **Light it properly**: start cartridge, helium spin start, TEA-TEB igniter or a dead-head tank-pressure start.
+  Valves have stroke times and the liquid in the lines has inertia, so slam a valve and you get water hammer.
+- **Fly it**: launch off the pad, climb through the standard atmosphere, or drop a stage tail-first from 6 km and try to
+  land it on its engine.
+- **Measure it**: a test stand records every run (chamber pressure, thrust, Isp, wall temperature and a dozen more)
+  and lets you compare one engine against another.
+- **One file**: the shaders are built into the exe. Copy it to a USB stick and run it. Windows 10 or 11 and a GPU with a
+  Vulkan or DirectX 12 driver; Linux and macOS should build too (untested).
+
+## Gallery
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/images/engine-merlin.jpg" alt="Merlin 1D at sea level"><br><sub>Merlin 1D, RP-1 / LOX, at sea level</sub></td>
+    <td align="center"><img src="docs/images/engine-f1.jpg" alt="F-1"><br><sub>F-1</sub></td>
+    <td align="center"><img src="docs/images/engine-hypergolic.jpg" alt="Hypergolic pressure-fed engine at 9 km"><br><sub>Hypergolic MMH / N2O4 at 9 km: the over-expanded plume pinches in</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/images/engine-staged.jpg" alt="Hydrolox staged combustion"><br><sub>Hydrolox staged combustion</sub></td>
+    <td align="center"><img src="docs/images/engine-rutherford.jpg" alt="Rutherford"><br><sub>Rutherford</sub></td>
+    <td align="center"><img src="docs/images/engine-tripropellant.jpg" alt="Tripropellant"><br><sub>Tripropellant</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/images/engine-rl10.jpg" alt="RL10 in vacuum"><br><sub>RL10 in vacuum: the plume fans out and thins</sub></td>
+    <td align="center"><img src="docs/images/engine-j2.jpg" alt="J-2 in vacuum"><br><sub>J-2 in vacuum</sub></td>
+    <td align="center"><img src="docs/images/engine-hydrolox-expander.jpg" alt="Hydrolox expander in vacuum"><br><sub>Hydrolox expander, big vacuum bell</sub></td>
+  </tr>
+</table>
+
+### In the game
+
+<p align="center"><img src="docs/images/ui-merlin.png" width="900" alt="The Merlin preset firing, with the engine panel showing chamber pressure, thrust and Isp"></p>
+<p align="center"><sub>A Merlin-style engine at 771 kN: gauges, pump speeds, heat and the event log on the right, the palette and view options on the left.</sub></p>
+
+<p align="center"><img src="docs/images/ui-staged-combustion.png" width="900" alt="Hydrolox staged combustion engine firing"></p>
+<p align="center"><sub>Hydrolox staged combustion: two turbopumps driven by a preburner, 990 kN.</sub></p>
+
+<p align="center"><img src="docs/images/ui-builder.png" width="900" alt="An unlit hydrolox engine in the builder"></p>
+<p align="center"><sub>Not lit yet: the plumbing, tanks and valves of an expander engine in the builder.</sub></p>
+
+## Quick start
+
+Install [Rust](https://rustup.rs), then:
+
+```
+git clone https://github.com/CasualArclamp/hotfire
+cd hotfire
+cargo run --release
+```
+
+Pick a preset on the left, press **START** on the right, and watch the engine panel. Left-click paints, right-click
+erases, the wheel changes the brush size and Ctrl+wheel zooms. The rest of this page is the full manual. There is also a [portable build](#portable-build)
+section for making a single exe to hand around.
+
+## Running it and developer switches
 
 (The cargo package, and so the exe, is still called `rocket_sandbox`.)
 
@@ -10,7 +83,7 @@ cargo run --release -- --selftest 20 shots/run       # headless: run 20 s, print
 cargo run --release -- --selftest 20 --prop 3 --pf --pc 25   # hypergolic, helium-fed, 25 bar
 cargo test                                           # plumbing, turbopump, valve, nozzle, save/load checks
 ```
-Other self-test flags: `--nbskirt [--nbexp R --nblen N]` (niobium skirt on the exit), `--vac`, `--hethruster`, `--coldgas --brushhole --patchlate` (patch a punctured bottle), `--prop N` (0 LH2, 1 CH4, 2 RP-1, 3 MMH/N2O4), `--axi`, `--pf`, `--pc BAR`, `--gg`, `--nojacket`.
+Other self-test flags: `--nbskirt [--nbexp R --nblen N]` (niobium skirt on the exit), `--vac`, `--hethruster`, `--coldgas --brushhole --patchlate` (patch a punctured bottle), `--prop N` (0 LH2, 1 CH4, 2 RP-1, 3 MMH/N2O4), `--axi`, `--pf`, `--pc BAR`, `--gg`, `--nojacket`, `--gif PREFIX [--gifstart F --gifevery N --gifn COUNT --view X Y SCALE]` (a numbered flame-view PNG every N frames, for the animation above).
 
 Simulation space: 640 x 768 cells (6.4 m x 7.7 m at 1 cm cells); presets are centred near the top so the
 plume has room. About 3500 gas steps per second on an RTX 3050 laptop GPU.
@@ -630,3 +703,7 @@ copy target\release\rocket_sandbox.exe hotfire\Hotfire.exe
 - Test switches: `--steps N`, `--idle`, `ROCKET_RENDER_BENCH=N` (times the field render),
   `ROCKET_STEPS`, `ROCKET_MODE`, `ROCKET_READBACK_EVERY` (keep at 1: older chamber-pressure readings make
   the gas-generator engines oscillate).
+
+## Licence
+
+Hotfire is free software under the [GNU General Public License, version 3 or later](LICENSE). Made by CasualArclamp.
