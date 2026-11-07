@@ -43,7 +43,7 @@ pub const ANIM_AIR: usize = ANIM_BURN + 9; // the wind past the vehicle (m/s dow
 pub const ANIM_PLUME: usize = ANIM_AIR + 3; // the stylised exhaust plume: on, exit x, exit y, half width, exit speed, Pe/Pa, Mach, flame temperature, intensity, throat y, purge cloud, green TEA-TEB exhaust glow, chamber top y, diamond style
 pub const ANIM_TEA: usize = ANIM_PLUME + 14; // the TEA-TEB flash (x, y, how bright), then 1 for each bottle that holds TEA-TEB
 /// Names of the Mach-diamond styles the plume shader can draw (the index is `World::fx_style`).
-pub const PLUME_STYLES: [&str; 6] = ["Classic beads", "Rhombus chain", "Shock lattice", "Crossed necks", "Nested photo diamonds", "Compression glow"];
+pub const PLUME_STYLES: [&str; 7] = ["Classic beads", "Rhombus chain", "Shock lattice", "Crossed necks", "Nested photo diamonds", "Compression glow", "Raptor reference"];
 pub const ANIM_NOZ: usize = ANIM_TEA + 3 + 64; // the gas passage of the main engine, a (left, right) pair of cells for each row from the injector row down
 pub const NOZ_ROWS: usize = 420;
 pub const ANIM_LEN: usize = ANIM_NOZ + 2 * NOZ_ROWS; // line flow phases, rotor blocks, tank levels, liquid fronts, contents, helium, burners
@@ -1089,7 +1089,7 @@ impl World {
             teateb_at: 0,
             tea_age: 99.0,
             purge_vis: 0.0,
-            fx_style: 0,
+            fx_style: 6, // (the style matched to photographs: see PLUME_STYLES)
             fx_plume: true,
             noz: Vec::new(),
             plume: [0.0; 14],

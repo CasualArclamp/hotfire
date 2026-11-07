@@ -778,7 +778,7 @@ impl App {
                 if !self.world.fx_plume {
                     ui.label(egui::RichText::new("Full simulation: the raw gas, no plume shader").small().weak());
                 } else {
-                    egui::ComboBox::from_label("Mach diamonds").selected_text(world::PLUME_STYLES[(self.world.fx_style as usize).min(5)]).show_ui(ui, |ui| {
+                    egui::ComboBox::from_label("Mach diamonds").selected_text(world::PLUME_STYLES[(self.world.fx_style as usize).min(6)]).show_ui(ui, |ui| {
                         for (k, name) in world::PLUME_STYLES.iter().enumerate() {
                             ui.selectable_value(&mut self.world.fx_style, k as u32, *name);
                         }
