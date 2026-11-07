@@ -241,7 +241,8 @@ const A_VAP: u32 = 1856u;    // must match world::ANIM_VAP
 const A_BURN: u32 = 2112u;   // must match world::ANIM_BURN
 const A_AIR: u32 = 2121u;    // must match world::ANIM_AIR
 const A_PLUME: u32 = 2124u;  // must match world::ANIM_PLUME
-const A_TEA: u32 = 2136u;    // must match world::ANIM_TEA
+const A_TEA: u32 = 2138u;    // must match world::ANIM_TEA
+const A_NOZ: u32 = 2205u;    // must match world::ANIM_NOZ (A_TEA + 3 + 64)
 
 // what a network holds: 0 fuel, 1 oxidiser, 2 both (mixed), 9 nothing
 fn net_prop(net: u32) -> u32 {
@@ -441,6 +442,7 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
     let s = cf.y - ye;
     if (s < -170.0 || inten < 0.03) { return vec4<f32>(0.0); }
     let sp = max(s, 0.0);
+    let style = i32(anim[A_PLUME + 13u] + 0.5); // which Mach-diamond style (world::PLUME_STYLES)
     let wv = anim[A_AIR];
     let fast = clamp(ve / 3000.0, 0.0, 1.5);
     let soot = clamp(r.soot, 0.0, 1.0);
@@ -458,11 +460,17 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
     // shock cells along the axis
     // (a well under-expanded plume has one long first cell and then fans out smoothly, it doesn't keep repeating)
     let under = clamp((ratio - 2.0) / 6.0, 0.0, 1.0);
-    let Ls = hw * (2.4 + 0.7 * mach) * (1.0 + 2.5 * under);
+    // (real cells are about 1.3 jet diameters x sqrt(M^2 - 1) long, three diameters for a Mach 2.6 nozzle; they are drawn
+    // closer together here so that several fit in the simulation's height)
+    let Ls = hw * (1.5 + 0.45 * mach) * (1.0 + 1.2 * under);
     let ph = 6.2832 * sp / Ls;
     let cells_left = mix(4.0, 1.2, under);
     let amp = clamp(0.03 + 0.22 * abs(lr), 0.0, 0.5) * exp(-sp / (Ls * cells_left)) * (1.0 - 0.8 * under);
-    R = max(R * (1.0 + amp * sin(ph)), 0.3 * hw);
+    let R0 = R; // (the radius before the shock cells pinch and swell it)
+    var ampk = 1.0;
+    if (style == 3) { ampk = 1.7; }
+    if (style == 5) { ampk = 2.1; }
+    R = max(R * (1.0 + clamp(amp * ampk, 0.0, 0.6) * sin(ph)), 0.3 * hw);
     // turbulence: big slow eddies swing the plume sideways (more the further out), smaller ones tear its edge
     let tt = r.time - 60.0 * floor(r.time / 60.0);
     let drift = tt * (2500.0 + 6500.0 * fast);
@@ -491,15 +499,70 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
     let c_white = exhaust_pal(0.0);
     var col = c_body * body * 0.85 + c_core * core * 0.8 * (0.4 + 0.6 * kindle) + c_white * axis * 1.0;
     col = col * speck * (0.3 + 0.7 * dec);
-    // shock diamonds: bright beads on the axis, stronger the further from matched pressure
-    let dia = pow(0.5 + 0.5 * cos(ph), 5.0) * clamp(0.25 + 0.6 * abs(lr), 0.0, 1.0) * exp(-sp / (Ls * mix(7.0, 1.0, under))) * (1.0 - 0.7 * under);
+    // Shock diamonds, stronger the further the exit pressure is from the air's. Six ways of drawing them (see
+    // world::PLUME_STYLES): sh is the white-hot light, shl the fainter light along the shock lines themselves, bodyk how
+    // much of the plume's body shows (a darker body lets the diamonds stand out).
+    let strength = clamp(0.25 + 0.6 * abs(lr), 0.0, 1.0);
+    let cdk = exp(-sp / (Ls * mix(7.0, 1.0, under))) * (1.0 - 0.7 * under);
     let beam = exp(-pow(q * 2.4, 2.0));
+    var sh = 0.0;
+    var shl = 0.0;
+    var bodyk = 1.0;
+    if (style <= 0) {
+        // beads of light on the axis, one per cell
+        sh = pow(0.5 + 0.5 * cos(ph), 5.0) * strength * cdk * beam * 0.8;
+    } else if (style == 1) {
+        // a chain of rhombi: pointed at both ends, widest mid-cell, dark between
+        let f = fract(sp / Ls) - 0.5;
+        let tri = max(1.0 - abs(2.0 * f), 0.0);
+        let wd = 0.62 * R * pow(tri, 0.8) + 0.001;
+        let ins = smoothstep(wd, wd * 0.55, abs(dx));
+        sh = ins * (0.3 + 0.7 * tri * tri) * strength * cdk * 1.7;
+    } else if (style == 2) {
+        // the shock lattice: two families of oblique shocks cross the jet, leaving rhombus cells that are bright at their
+        // centres, with a faint trace of the shocks themselves
+        let kk = 0.5 * Ls / (0.8 * max(R, 1.0));
+        let t1 = abs(fract((sp + abs(dx) * kk) / Ls) - 0.5) * 2.0;
+        let t2 = abs(fract((sp - abs(dx) * kk) / Ls) - 0.5) * 2.0;
+        let lat = smoothstep(1.0, 0.7, q);
+        sh = pow((1.0 - t1) * (1.0 - t2), 1.3) * lat * strength * cdk * 1.8;
+        shl = smoothstep(0.88, 1.0, max(t1, t2)) * lat * strength * cdk * 0.55;
+    } else if (style == 3) {
+        // crossed necks: the jet pinches, an X of oblique shocks crosses at each neck and the neck itself flares white
+        let u = fract(sp / Ls - 0.25) - 0.5; // 0 at the pinch, where sin(ph) is -1
+        let ln = exp(-pow((abs(dx) - 1.5 * R * abs(u)) / (0.07 * R + 1.0), 2.0)) * smoothstep(0.62, 0.3, abs(u)) * smoothstep(1.15, 0.8, q);
+        let node = exp(-pow(dx / (0.32 * R + 1.0), 2.0) - pow(u / 0.12, 2.0));
+        sh = node * strength * cdk * 1.9;
+        shl = ln * strength * cdk * 0.9;
+    } else if (style == 4) {
+        // as in a photograph: sharp-edged nested rhombi on a darker body
+        let f = fract(sp / Ls) - 0.5;
+        let tri = max(1.0 - abs(2.0 * f), 0.0);
+        let e = max(0.9, 0.05 * R);
+        let dr = abs(cf.x - xc); // (the straight distance from the axis: the eddy warp would wobble the edges)
+        let o_r = smoothstep(0.62 * R * tri, 0.62 * R * tri - e, dr) * step(0.02, tri);
+        let i_r = smoothstep(0.3 * R * tri, 0.3 * R * tri - e, dr) * step(0.02, tri);
+        sh = (0.42 * o_r + 0.75 * i_r) * strength * cdk * 1.5;
+        bodyk = 0.6;
+    } else {
+        // compression glow: no drawn shapes, the light follows the gas density as the jet pinches and swells, with the
+        // slanting shock edges picked out where the outline turns
+        let comp = pow(R0 / max(R, 1.0), 2.0);
+        let squeeze = clamp((comp - 0.9) * 2.2, 0.0, 1.0);
+        let wq = 0.1 + 0.7 * pow(squeeze, 1.4);
+        sh = squeeze * smoothstep(wq, wq * 0.45, q) * strength * cdk * 1.3;
+        shl = exp(-pow((q0 - 0.95) / 0.09, 2.0)) * abs(cos(ph)) * strength * cdk * 0.7;
+        bodyk = 0.8 + 0.4 * clamp(comp - 0.7, 0.0, 1.0);
+    }
     var md = 0.0;
     if (ratio > 3.0) {
         let dm = 0.67 * hw * sqrt(ratio);
         md = exp(-pow((sp - dm) / (0.15 * hw + 1.0), 2.0)) * smoothstep(0.6, 0.0, abs(dx) / (0.55 * R));
     }
-    col = col + c_white * (dia * beam * 0.8 + md * 0.9) * (0.4 + 0.6 * dec);
+    sh = sh * 0.7;
+    col = col * bodyk * (0.72 + 0.5 * clamp(sh, 0.0, 1.0)); // (the body is brighter where a diamond lights it, darker between)
+    // (mixed towards white rather than added, so a diamond keeps its gradient instead of clipping to a flat patch)
+    col = mix(col, c_white * 1.1, clamp(sh * (0.4 + 0.6 * dec), 0.0, 0.92)) + c_white * md * 0.9 * (0.4 + 0.6 * dec) + mix(c_core, c_white, 0.5) * shl * (0.4 + 0.6 * dec);
     // a clean flame shows less of a body (the diamonds and the hot core are what you see)
     let see = mix(0.45, 1.0, soot);
     var rgb = col * see * fade_in * inten * airf;
@@ -562,10 +625,22 @@ fn purge_cloud(cf: vec2<f32>) -> vec4<f32> {
     let ye = anim[A_PLUME + 2u];
     let hw = max(anim[A_PLUME + 3u], 3.0);
     let s = cf.y - ye;
-    if (s < -2.0) { return vec4<f32>(0.0); }
-    let sp = max(s, 0.0);
     let dx = cf.x - xc;
     let tt = r.time - 60.0 * floor(r.time / 60.0);
+    if (s < 0.0) {
+        // inside the engine: the purge gas filling the chamber and bell, white and streaming down the passage
+        // (the rows of the passage come from the world: the gas there is moving too slowly to show up on its own)
+        let k = i32(floor(cf.y - anim[A_PLUME + 12u]));
+        if (k < 0 || k >= 420) { return vec4<f32>(0.0); }
+        let wl = anim[A_NOZ + u32(k) * 2u];
+        let wr = anim[A_NOZ + u32(k) * 2u + 1u];
+        if (cf.x < wl || cf.x > wr + 1.0) { return vec4<f32>(0.0); }
+        let ns = fbm(vec2<f32>(dx * 0.12, (cf.y - tt * 500.0) * 0.03));
+        let dn = 0.55 + 0.7 * ns;
+        let ci = mix(vec3<f32>(0.6, 0.7, 0.88), vec3<f32>(0.97, 0.98, 1.0), smoothstep(0.3, 1.0, dn)) * (0.75 + 0.35 * ns);
+        return vec4<f32>(ci, clamp(dn, 0.0, 0.88) * vis);
+    }
+    let sp = max(s, 0.0);
     // (wide and soft: the gas is slow and cold, so it spreads instead of streaking like the exhaust)
     let R = hw * (0.9 + 0.55 * sqrt(sp / hw)) + 0.22 * sp;
     let n1 = fbm(vec2<f32>(dx * 0.05, (sp - tt * 240.0) * 0.028));
@@ -577,6 +652,25 @@ fn purge_cloud(cf: vec2<f32>) -> vec4<f32> {
     let moist = mix(0.2, 1.0, clamp(anim[A_AIR + 1u] * 4.0, 0.0, 1.0));
     let a = clamp(dens * 1.25, 0.0, 0.92) * vis * moist * smoothstep(-2.0, 2.0, s);
     let c = mix(vec3<f32>(0.55, 0.66, 0.84), vec3<f32>(0.97, 0.98, 1.0), smoothstep(0.15, 0.7, dens)) * (0.6 + 0.5 * n);
+    return vec4<f32>(c, a);
+}
+
+// Cold gas in air turns white: the vapour of any cryogenic liquid (liquid oxygen, hydrogen, methane) that is injected
+// or spilled from a burst line condenses the air's moisture into a mist. It follows the simulation's own cold, dense
+// gas, so it billows wherever the flow takes it: out of a chamber that has been fed propellants but not lit, from a
+// ruptured tank or pipe, down the bell. Where the air is thin there is little moisture to condense, and a hot gas is
+// no mist at all. rgb is the colour, a is how much of the old picture it covers.
+fn cryo_mist(cf: vec2<f32>, rho: f32, T: f32) -> vec4<f32> {
+    let cold = smoothstep(250.0, 140.0, T);
+    if (cold < 0.01) { return vec4<f32>(0.0); }
+    let dens = smoothstep(0.03, 0.5, rho);
+    let moist = mix(0.25, 1.0, clamp(anim[A_AIR + 1u] * 4.0, 0.0, 1.0));
+    let tt = r.time - 60.0 * floor(r.time / 60.0);
+    let n1 = fbm(vec2<f32>(cf.x * 0.10, cf.y * 0.10 - tt * 2.0));
+    let n2 = fbm(vec2<f32>(cf.x * 0.30 + 7.0, cf.y * 0.30 - tt * 4.0));
+    let n = 0.65 * n1 + 0.35 * n2;
+    let a = clamp(cold * dens * moist * (0.45 + 1.0 * n), 0.0, 0.9);
+    let c = mix(vec3<f32>(0.6, 0.7, 0.88), vec3<f32>(0.97, 0.98, 1.0), smoothstep(0.3, 1.0, n + 0.3 * cold)) * (0.7 + 0.4 * n);
     return vec4<f32>(c, a);
 }
 
@@ -944,13 +1038,20 @@ fn fs(in: VOut) -> @location(0) vec4<f32> {
             }
         }
         // TEA-TEB lights green (boron): for the first moments of the start the whole flame, in the chamber, the bell
-        // and the plume, burns green and white-hot before it settles to its own colour, as a Merlin's does
+        // and the plume, burns green and white-hot before it settles to its own colour, as a Merlin's does. (This
+        // tints whatever is drawn, so it works in the full-simulation view too; the plume geometry is only used to find the engine.)
         let gk = clamp(anim[A_PLUME + 11u] * 1.3, 0.0, 1.0);
-        if (gk > 0.01 && anim[A_PLUME] > 0.5 && abs(cf.x - anim[A_PLUME + 1u]) < 8.0 * max(anim[A_PLUME + 3u], 3.0)) {
+        if (gk > 0.01 && anim[A_PLUME + 3u] > 0.5 && abs(cf.x - anim[A_PLUME + 1u]) < 8.0 * max(anim[A_PLUME + 3u], 3.0)) {
             let lum = clamp(dot(col, vec3<f32>(0.35, 0.5, 0.15)) * 1.3, 0.0, 1.6);
             let green = vec3<f32>(0.1, 1.0, 0.28) * lum + vec3<f32>(0.5, 1.0, 0.65) * pow(lum, 3.0) * 0.4;
             col = mix(col, green, gk * smoothstep(0.04, 0.35, lum));
         }
+        // cold gas from cryogenic propellant (a cold start before the igniter, a burst line or tank)
+        let Um = st[i];
+        let rho_m = max(Um.x, 1e-6);
+        let em = max(Um.w / rho_m - 0.5 * (Um.y * Um.y + Um.z * Um.z) / (rho_m * rho_m), 1.0);
+        let cm = cryo_mist(cf, rho_m, em * (r.gamma - 1.0) / r.rgas);
+        col = mix(col, cm.rgb, cm.a);
         col = col + burner_jets(cf);
     }
     // pipes behind the engine plane show through gas; pipes in front cover everything

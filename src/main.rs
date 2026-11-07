@@ -774,7 +774,16 @@ impl App {
                 ui.checkbox(&mut self.show_heat, "Glow hot walls");
                 ui.checkbox(&mut self.show_engine, "Engine panel (right)");
                 ui.checkbox(&mut self.world.st.show_particles, "Flow particles");
-                ui.checkbox(&mut self.world.fx_plume, "Stylised exhaust plume").on_hover_text("Draw the main nozzle's exhaust as a plume shader driven by the exit speed, Mach number, flame temperature, air pressure and wind (the gas simulation underneath is unchanged). Off: the gas simulation's own picture.");
+                ui.checkbox(&mut self.world.fx_plume, "Stylised exhaust plume").on_hover_text("Draw the main nozzle's exhaust as a plume shader driven by the exit speed, Mach number, flame temperature, air pressure and wind, and the start purge as a white cloud (the gas simulation underneath is unchanged). Off: the full simulation, the gas exactly as the solver has it: no plume shader, no purge cloud, no recolouring in the bell. A far plume needs a lot of gas steps to look right, so on a fast GPU raise \"gas steps per 1/60 s\" (Simulation) and the plume fills in.");
+                if !self.world.fx_plume {
+                    ui.label(egui::RichText::new("Full simulation: the raw gas, no plume shader").small().weak());
+                } else {
+                    egui::ComboBox::from_label("Mach diamonds").selected_text(world::PLUME_STYLES[(self.world.fx_style as usize).min(5)]).show_ui(ui, |ui| {
+                        for (k, name) in world::PLUME_STYLES.iter().enumerate() {
+                            ui.selectable_value(&mut self.world.fx_style, k as u32, *name);
+                        }
+                    });
+                }
                 ui.checkbox(&mut self.world.st.failures, "Walls can melt / burst");
             });
 
@@ -2831,6 +2840,12 @@ fn selftest(seconds: f32, shot: Option<String>, args: &[String]) {
     if args.iter().any(|a| a == "--idle") {
         w.clear(); // nothing at all: still air everywhere
     }
+    if let Some(k) = arg("--plumestyle") {
+        w.fx_style = k as u32;
+    }
+    if args.iter().any(|a| a == "--fullsim") {
+        w.fx_plume = false; // the gas simulation as it is, no stylised plume
+    }
     if args.iter().any(|a| a == "--vac") {
         w.st.amb_p = 100.0;
     }
@@ -3545,6 +3560,10 @@ fn selftest(seconds: f32, shot: Option<String>, args: &[String]) {
             println!("cell ({x},{y}) type {} rho {:.4} T {:.0} K P {:.2} bar", w.cells[World::idx(x, y)], s[0], gas_p(s, pr.gamma) / (s[0].max(1e-6) * pr.rgas), gas_p(s, pr.gamma) / 1e5);
         }
     }
+    if args.iter().any(|a| a == "--plumeinfo") {
+        let p = w.plume;
+        println!("plume: on {} exit x {:.0} y {:.0} half-width {:.1} cells, exit speed {:.0} m/s, Pe/Pa {:.2}, Mach {:.2}, flame {:.0} K, intensity {:.2}", p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8]);
+    }
     if let Some(prefix) = shot {
         for (m, name) in [(6u32, "flame"), (1, "pressure"), (3, "mach"), (4, "temp")] {
             let view = match args.iter().position(|a| a == "--view") {
@@ -3614,6 +3633,12 @@ fn main() -> eframe::Result {
                 app.gauges.push(PressureGauge { at: egui::vec2(60.0 + ox, 70.0 + oy), probe: World::idx(128 + presets::PRESET_OX, 80 + presets::PRESET_OY), range_bar: 1.0 });
                 app.gauges.push(PressureGauge { at: egui::vec2(200.0 + ox, 60.0 + oy), probe: World::idx(127 + presets::PRESET_OX, 15 + presets::PRESET_OY), range_bar: 1.0 });
                 app.world.start_sequence();
+            }
+            if let Some(k) = std::env::var("ROCKET_PLUMESTYLE").ok().and_then(|v| v.parse::<u32>().ok()) {
+                app.world.fx_style = k;
+            }
+            if std::env::var("ROCKET_FULLSIM").is_ok() {
+                app.world.fx_plume = false; // for screenshots: the full simulation, no plume shader
             }
             if std::env::var("ROCKET_AUTOSTART").is_ok() {
                 app.world.start_sequence();

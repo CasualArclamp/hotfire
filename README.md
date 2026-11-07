@@ -183,6 +183,11 @@ copy target\release\rocket_sandbox.exe hotfire\Hotfire.exe
   from the gas at the nozzle exit (speed, Mach number, pressure against the air's), the flame temperature, the
   ambient pressure and the wind: it bursts wide in thin air, pinches in low down, has shock diamonds and a Mach disk,
   streams fast, and is squashed by air rushing up into the nozzle. The gas simulation underneath is unchanged.
+  **Turn it off for the full simulation**: the gas exactly as the solver has it, with no plume shader, no purge cloud and no
+  recolouring in the bell (a TEA-TEB start still burns green, and cold cryogenic vapour still turns to mist, since both
+  come from the simulation). On a fast GPU, raise *gas steps per 1/60 s* (Simulation) so the far plume fills in.
+  With the plume shader on, **Mach diamonds** picks how the shock cells are drawn (classic beads, a rhombus chain, a shock
+  lattice, crossed necks, nested photo-style diamonds or a compression glow).
 - **Starters**: three ways to spin the pumps up. A *Start cartridge* part (Turbopumps and gas generators) touching a
   shaft, or a wall's thickness from it, gives that shaft 250 kW per cell for the start (builds with none use the
   *start cartridge W* setting). *Helium spin start* (Simulation) blows helium from the bottle through the turbines

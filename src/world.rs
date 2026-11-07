@@ -40,9 +40,13 @@ pub const ANIM_BOIL: usize = ANIM_HE + MAX_BLOCKS; // per-network boiling intens
 pub const ANIM_VAP: usize = ANIM_BOIL + 256; // per-network ullage vapour density for drawing (0..1)
 pub const ANIM_BURN: usize = ANIM_VAP + 256; // the burner blocks: how many (up to 8), then their block numbers
 pub const ANIM_AIR: usize = ANIM_BURN + 9; // the wind past the vehicle (m/s down the screen), ambient density against sea level
-pub const ANIM_PLUME: usize = ANIM_AIR + 3; // the stylised exhaust plume: on, exit x, exit y, half width, exit speed, Pe/Pa, Mach, flame temperature, intensity, throat y, purge cloud, green TEA-TEB exhaust glow
-pub const ANIM_TEA: usize = ANIM_PLUME + 12; // the TEA-TEB flash (x, y, how bright), then 1 for each bottle that holds TEA-TEB
-pub const ANIM_LEN: usize = ANIM_TEA + 3 + 64; // line flow phases, rotor blocks, tank levels, liquid fronts, contents, helium, burners
+pub const ANIM_PLUME: usize = ANIM_AIR + 3; // the stylised exhaust plume: on, exit x, exit y, half width, exit speed, Pe/Pa, Mach, flame temperature, intensity, throat y, purge cloud, green TEA-TEB exhaust glow, chamber top y, diamond style
+pub const ANIM_TEA: usize = ANIM_PLUME + 14; // the TEA-TEB flash (x, y, how bright), then 1 for each bottle that holds TEA-TEB
+/// Names of the Mach-diamond styles the plume shader can draw (the index is `World::fx_style`).
+pub const PLUME_STYLES: [&str; 6] = ["Classic beads", "Rhombus chain", "Shock lattice", "Crossed necks", "Nested photo diamonds", "Compression glow"];
+pub const ANIM_NOZ: usize = ANIM_TEA + 3 + 64; // the gas passage of the main engine, a (left, right) pair of cells for each row from the injector row down
+pub const NOZ_ROWS: usize = 420;
+pub const ANIM_LEN: usize = ANIM_NOZ + 2 * NOZ_ROWS; // line flow phases, rotor blocks, tank levels, liquid fronts, contents, helium, burners
 pub const DRY: f32 = 1.0e6; // phase of line cells no tank can reach
 
 #[derive(Clone)]
@@ -982,8 +986,10 @@ pub struct World {
     pub teateb_at: usize,    // ... in this gas cell
     pub tea_age: f32,        // seconds since the TEA-TEB first reached an injector (the exhaust burns green for the first second or so)
     pub purge_vis: f32,      // the cold-gas purge cloud at the nozzle exit (0..1): rises while the start purge runs, thins away after it
+    pub fx_style: u32,      // which Mach-diamond style the plume shader draws (see PLUME_STYLES)
     pub fx_plume: bool,     // draw the exhaust as a plume shader (off: just the gas simulation's own picture)
-    pub plume: [f32; 12],   // what the plume shader needs (see ANIM_PLUME)
+    pub noz: Vec<f32>,      // (left, right) gas cell of each row of the main engine's passage, from the injector row (see ANIM_NOZ)
+    pub plume: [f32; 14],   // what the plume shader needs (see ANIM_PLUME)
     pub air_phase: f32,     // how far the air streaks have travelled (adds up the wind, so a change of speed never makes them jump)
     pub flight: bool,       // the vehicle flies: thrust, weight and drag move it, and the altitude follows
     pub vel: f32,           // vertical speed, m/s (up is positive)
@@ -1083,8 +1089,10 @@ impl World {
             teateb_at: 0,
             tea_age: 99.0,
             purge_vis: 0.0,
+            fx_style: 0,
             fx_plume: true,
-            plume: [0.0; 12],
+            noz: Vec::new(),
+            plume: [0.0; 14],
             air_phase: 0.0,
             flight: false,
             vel: 0.0,
@@ -2803,7 +2811,10 @@ impl World {
         a[ANIM_AIR] = self.wind();
         a[ANIM_AIR + 1] = (self.st.amb_p / 101325.0).clamp(0.0, 1.0);
         a[ANIM_AIR + 2] = self.air_phase;
-        a[ANIM_PLUME..ANIM_PLUME + 12].copy_from_slice(&self.plume);
+        a[ANIM_PLUME..ANIM_PLUME + 14].copy_from_slice(&self.plume);
+        for (k, v) in self.noz.iter().enumerate().take(2 * NOZ_ROWS) {
+            a[ANIM_NOZ + k] = *v;
+        }
         a[ANIM_TEA] = (self.teateb_at % W) as f32;
         a[ANIM_TEA + 1] = (self.teateb_at / W) as f32;
         a[ANIM_TEA + 2] = self.teateb_flash;
@@ -2835,8 +2846,8 @@ impl World {
 
     /// Where the main nozzle ends and what the gas is doing there, for the plume shader: walk down from a
     /// gas cell of the chamber while the gas is walled in on both sides; the row below the last one is the exit.
-    fn find_plume(&self, rb: &Readback) -> [f32; 12] {
-        let mut out = [0.0f32; 12];
+    fn find_plume(&self, rb: &Readback, noz: &mut Vec<f32>) -> [f32; 14] {
+        let mut out = [0.0f32; 14];
         let Some(&(_, gc)) = self.nets.iter().filter(|n| n.prop != PROP_HE).max_by_key(|n| n.injectors.len()).and_then(|n| n.injectors.first()) else { return out };
         let (mut xc, y0) = (gc % W, gc / W);
         let mut last: Option<(usize, usize, usize)> = None;
@@ -2862,6 +2873,10 @@ impl World {
                 throat_y = y;
             }
             rows += 1;
+            if noz.len() < 2 * NOZ_ROWS {
+                noz.push(l as f32);
+                noz.push(r as f32);
+            }
             xc = (l + r) / 2;
         }
         let Some((l, r, y)) = last else { return out };
@@ -2891,6 +2906,7 @@ impl World {
         let burn = ((pe / 2.0e4).min(1.0)).sqrt() * ((speed - 200.0) / 1300.0).clamp(0.0, 1.0);
         out[8] = burn;
         out[9] = throat_y as f32;
+        out[12] = y0 as f32; // the injector row: the top of the chamber
         out
     }
 
@@ -2953,8 +2969,12 @@ impl World {
         let purge_to = if self.purge_t > 0.0 { 1.0 } else { 0.0 };
         let purge_rate = if purge_to > self.purge_vis { 1.0 / 0.4 } else { 1.0 / 1.8 };
         self.purge_vis += (purge_to - self.purge_vis).clamp(-purge_rate * dt_sim, purge_rate * dt_sim);
-        self.plume = self.find_plume(rb);
+        let mut noz = std::mem::take(&mut self.noz);
+        noz.clear();
+        self.plume = self.find_plume(rb, &mut noz);
+        self.noz = noz;
         self.plume[10] = self.purge_vis;
+        self.plume[13] = self.fx_style as f32;
         self.plume[11] = ((2.4 - self.tea_age) / 1.3).clamp(0.0, 1.0); // green exhaust glow: full for the first 1.1 s (the plume takes about that long to build), gone by 2.4 s
         if self.flight {
             self.fly(dt_sim);
