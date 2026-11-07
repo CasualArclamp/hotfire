@@ -15,6 +15,34 @@ Other self-test flags: `--nbskirt [--nbexp R --nblen N]` (niobium skirt on the e
 Simulation space: 640 x 768 cells (6.4 m x 7.7 m at 1 cm cells); presets are centred near the top so the
 plume has room. About 3500 gas steps per second on an RTX 3050 laptop GPU.
 
+## Portable build
+
+Hotfire is one file: the shaders are compiled into the exe, so there is nothing to install next to it.
+
+```
+cargo build --release
+```
+
+The result is `target/release/rocket_sandbox.exe` (about 16 MB). Copy it anywhere, to a USB stick or another PC, and
+run it. To make a ready-to-share folder:
+
+```
+mkdir hotfire
+copy targeteleaseocket_sandbox.exe hotfire\Hotfire.exe
+```
+
+- **What the target PC needs:** Windows 10 or 11 and a GPU with a Vulkan or DirectX 12 driver (any recent one; the
+  gas solver runs on it, so a very old or software-only adapter will be slow). The Visual C++ runtime is already on
+  almost every Windows PC; to not depend on it at all, build with `set RUSTFLAGS=-C target-feature=+crt-static`
+  first.
+- **Where it saves:** designs go to a `designs` folder and stamps to a `stamps` folder, both made in the folder the
+  game is started from. For a truly portable copy, start it from its own folder (or a shortcut with *Start in* set to
+  that folder) and your designs travel with it. Copy the `designs` folder across to move your builds.
+- **Faster start-up on another machine:** the first launch compiles the shaders for that GPU, which takes a second
+  or two; there is nothing to configure.
+- **Linux or macOS:** the same `cargo build --release` works (it uses wgpu), and gives `target/release/rocket_sandbox`.
+  Not tested here; only Windows has been run.
+
 ## Controls
 - **Brush**: left paints, right-click erases (walls, pipes and any painted gas, fuel or fire; on the Back/Front
   layer only that layer's pipes). The white box shows exactly which cells the brush covers.
