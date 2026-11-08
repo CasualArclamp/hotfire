@@ -437,7 +437,12 @@ impl World {
         }
         self.dirty.clear();
         self.nets_dirty = true;
+        // (the network table is rebuilt on the next update: until then no cell may point into the old one, or a panel that
+        // looks a cell's network up between the load and the rebuild reads past the end)
         self.nets.clear();
+        self.net_of = vec![NO_NET; N];
+        self.layer_net = [vec![NO_NET; N], vec![NO_NET; N]];
+        self.valve_dests.clear();
         Ok(())
     }
 }
@@ -700,6 +705,30 @@ mod tests {
         let (r2, who2) = w.gas_of(inj).expect("the chamber is burning");
         assert_eq!(who2, "main chamber");
         assert!((r2 - w.g.of).abs() < 1e-4);
+    }
+
+    #[test]
+    fn loading_over_another_engine_is_safe() {
+        // a design loaded over a running engine: the panels look at valves and cells before the networks are rebuilt
+        let mut w = World::new();
+        w.load_preset(6);
+        for _ in 0..10 {
+            w.update(&Readback::default(), 1.0 / 60.0);
+        }
+        let t = w.to_text();
+        let mut other = World::new();
+        other.load_preset(0);
+        for _ in 0..10 {
+            other.update(&Readback::default(), 1.0 / 60.0);
+        }
+        other.from_text(&t).unwrap();
+        for k in 0..other.valves.len() {
+            let _ = other.valve_label(k);
+        }
+        for i in (0..crate::world::N).step_by(101) {
+            let _ = other.gas_of(i);
+            let _ = other.net_around(i);
+        }
     }
 
     #[test]

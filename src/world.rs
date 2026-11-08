@@ -1588,7 +1588,8 @@ impl World {
 
     /// The propellant line a part belongs to: its own network, or (a closed valve splits one) the one beside it.
     pub fn net_around(&self, i: usize) -> Option<usize> {
-        let ok = |j: usize| (self.net_of[j] != NO_NET).then_some(self.net_of[j] as usize).filter(|&n| self.nets[n].prop <= 1);
+        // (right after a load the network table can be older than the cells: look nets up safely)
+        let ok = |j: usize| (self.net_of[j] != NO_NET).then_some(self.net_of[j] as usize).filter(|&n| self.nets.get(n).is_some_and(|n| n.prop <= 1));
         if let Some(n) = ok(i) {
             return Some(n);
         }
