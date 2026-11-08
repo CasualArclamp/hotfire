@@ -464,7 +464,7 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
     let Mj = clamp(sqrt(max((pow(pt_pa, (gam - 1.0) / gam) - 1.0) / kg, 1.0)), 1.05, 6.0);
     // (the area ratio of the fully expanded jet to the exit: the width ratio in the planar simulation, its square for a round engine)
     let area_j = (mach / Mj) * pow((1.0 + kg * Mj * Mj) / (1.0 + kg * mach * mach), (gam + 1.0) / (2.0 * (gam - 1.0)));
-    let Dj = De * clamp(select(area_j, sqrt(area_j), anim[A_PLUME + 17u] > 0.5), 0.45, 2.5);
+    let Dj = De * clamp(select(area_j, sqrt(area_j), (u32(anim[A_PLUME + 17u] + 0.5) & 1u) == 1u), 0.45, 2.5);
     // Prandtl-Pack shock cell length, 1.306 Dj sqrt(Mj^2 - 1): 3 to 6 exit diameters for these nozzles, against about 1.5 in
     // photographs of real engines (hot, low-gamma exhaust and a non-uniform exit flow shorten the cells), so it is scaled
     // by 0.45 to match them, keeping the formula's trend with Mach number and pressure ratio.
@@ -1081,6 +1081,15 @@ fn fs(in: VOut) -> @location(0) vec4<f32> {
     // the hot gas a burner block sends out of its outlet
     if ((r.mode == 6u || r.mode == 0u) && (mat[i] & 255u) == 0u) {
         let pl = plume(cf);
+        // an aerospike: the plume shader draws the exhaust below the base of the spike, so the simulation's own gas there (the
+        // wide, billowing wake) is hidden under it
+        if (anim[A_PLUME] > 0.5 && anim[A_PLUME + 17u] > 1.5 && anim[A_PLUME + 8u] > 0.03) {
+            let hws = max(anim[A_PLUME + 3u], 3.0);
+            let sps = cf.y - anim[A_PLUME + 2u];
+            let wide = 3.0 * hws + 0.45 * max(sps, 0.0);
+            let mk = smoothstep(0.0, 0.4 * hws, sps) * smoothstep(wide, 0.6 * wide, abs(cf.x - anim[A_PLUME + 1u]));
+            col = col * (1.0 - 0.97 * mk);
+        }
         col = col * (1.0 - 0.95 * pl.a) + pl.rgb;
         let pc = purge_cloud(cf);
         col = mix(col, pc.rgb, pc.a);

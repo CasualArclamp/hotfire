@@ -3042,6 +3042,9 @@ impl World {
     fn find_plume(&self, rb: &Readback, noz: &mut Vec<f32>) -> [f32; 18] {
         let mut out = [0.0f32; 18];
         let Some(&(_, gc)) = self.nets.iter().filter(|n| n.prop != PROP_HE).max_by_key(|n| n.injectors.len()).and_then(|n| n.injectors.first()) else { return out };
+        if let Some(g) = self.spike_geom() {
+            return self.spike_plume(rb, g);
+        }
         let (mut xc, y0) = (gc % W, gc / W);
         let mut last: Option<(usize, usize, usize)> = None;
         let mut rows = 0;
@@ -3138,10 +3141,117 @@ impl World {
         out
     }
 
+    /// An aerospike's geometry, if the engine is one: injectors on both sides of a spike (the axis between them has solid cells
+    /// under the injectors). (axis x, row of the top of the injectors, row of the base of the spike, half-span of the injectors)
+    fn spike_geom(&self) -> Option<(f32, usize, usize, f32)> {
+        let n = self.nets.iter().filter(|n| n.prop != PROP_HE).max_by_key(|n| n.injectors.len())?;
+        let xs: Vec<usize> = n.injectors.iter().map(|&(_, g)| g % W).collect();
+        let (xmin, xmax) = (*xs.iter().min()?, *xs.iter().max()?);
+        if xmax - xmin < 24 {
+            return None;
+        }
+        let y0 = n.injectors.iter().map(|&(_, g)| g / W).min()?;
+        let xm = (xmin + xmax) / 2;
+        // the spike: solid cells down the middle, below the injectors
+        let solid = |y: usize| (xm.saturating_sub(8)..=xm + 8).any(|x| x < W && self.cells[Self::idx(x, y)] != c::EMPTY);
+        if !(y0 + 5..y0 + 40).any(|y| y < H && solid(y)) {
+            return None;
+        }
+        let (mut y, mut last, mut gap) = (y0, y0, 0);
+        while y + 1 < H && gap < 10 {
+            if solid(y) {
+                last = y;
+                gap = 0;
+            } else {
+                gap += 1;
+            }
+            y += 1;
+        }
+        if last - y0 < 15 || last + 20 >= H {
+            return None;
+        }
+        Some((xm as f32 + 0.5, y0, last, (xmax - xmin) as f32 * 0.5 + 0.5))
+    }
+
+    /// The plume of an aerospike: a virtual nozzle whose exit is the base of the spike, as wide as the base and the two sheets of
+    /// exhaust that run down its sides to it, with the speed and pressure of those sheets just below the base. Ambient-adapting, so
+    /// its pressure ratio sits near 1 and the diamonds are weak.
+    fn spike_plume(&self, rb: &Readback, (xm, y0, yb, _half): (f32, usize, usize, f32)) -> [f32; 18] {
+        let mut out = [0.0f32; 18];
+        let pr = self.blended_prop();
+        // the base: the width of the solid cells (and the duct between them) a few rows above the end of the spike
+        let row = yb.saturating_sub(2);
+        let xi = xm as usize;
+        let ext = |dir: i32| -> f32 {
+            let (mut x, mut far) = (xi as i32, 0);
+            for k in 0..50 {
+                let xx = (xi as i32 + dir * k).clamp(0, W as i32 - 1);
+                if self.cells[Self::idx(xx as usize, row)] != c::EMPTY {
+                    far = k;
+                }
+                x = xx;
+            }
+            let _ = x;
+            far as f32
+        };
+        let mut hw = (0.5 * (ext(-1) + ext(1)) + 7.0).clamp(8.0, 45.0);
+        // the exhaust itself: the span of fast gas a few rows under the base (the sheets have not yet closed up behind the spike)
+        if rb.valid {
+            let yy = (yb + 9).min(H - 2);
+            let (mut lo, mut hi) = (usize::MAX, 0usize);
+            for x in xi.saturating_sub(80)..=(xi + 80).min(W - 2) {
+                let st = rb.state[Self::idx(x, yy)];
+                let rho = st[0].max(1e-6);
+                if (st[1] * st[1] + st[2] * st[2]).sqrt() / rho > 300.0 {
+                    lo = lo.min(x);
+                    hi = hi.max(x);
+                }
+            }
+            if lo < hi {
+                hw = hw.max(0.5 * (hi - lo) as f32 + 3.0).min(55.0);
+            }
+        }
+        let ye = yb + 1;
+        let (mut speed, mut pe, mut mach) = (0.0f32, self.st.amb_p, 2.0f32);
+        if rb.valid {
+            // the fastest gas just under the base, across the sheets
+            // (taken along the ramp just above the base, where the sheets run at full speed: under the base the air rushing
+            // past a climbing vehicle can stall the gas, and the exhaust's strength should not depend on that)
+            let yy = yb.saturating_sub(4);
+            let mut best = 0.0f32;
+            for x in (xi.saturating_sub(hw as usize + 20))..=(xi + hw as usize + 20).min(W - 2) {
+                let s = rb.state[Self::idx(x, yy)];
+                let rho = s[0].max(1e-6);
+                let v = (s[1] * s[1] + s[2] * s[2]).sqrt() / rho;
+                if v > best {
+                    best = v;
+                    let p = gas_p(s, pr.gamma);
+                    let t = p / (rho * pr.rgas);
+                    (speed, pe, mach) = (v, p, v / (pr.gamma * pr.rgas * t.max(50.0)).sqrt());
+                }
+            }
+        }
+        out[0] = 1.0;
+        out[1] = xm;
+        out[2] = ye as f32;
+        out[3] = hw;
+        out[4] = speed;
+        out[5] = (pe / self.st.amb_p.max(1.0)).clamp(0.8, 4.0);
+        out[6] = mach.clamp(1.6, 4.0);
+        out[7] = self.g.t_flame.max(1500.0);
+        out[8] = ((pe / 2.0e4).min(1.0)).sqrt() * ((speed - 200.0) / 1300.0).clamp(0.0, 1.0);
+        out[9] = ye as f32; // no throat or bell to tint: the ramp's own gas is drawn by the simulation
+        out[12] = ye as f32;
+        out[15] = hw;
+        out[17] = 2.0 + self.st.axi as u8 as f32; // 2: an aerospike (the shader hides the simulation's gas below the base)
+        let _ = y0;
+        out
+    }
+
     /// Where the jet stabiliser starts: below the exit of the bell the plume code found, or, for an engine with no bell to find (an
     /// aerospike), below the tip of the spike down the middle of its injectors, with the span of the injectors as the width.
     pub fn find_stab_geom(&self) -> Option<(f32, f32)> {
-        if self.plume[0] > 0.5 {
+        if self.plume[0] > 0.5 && self.plume[17] < 1.5 {
             return Some((self.plume[2], self.plume[3]));
         }
         let n = self.nets.iter().filter(|n| n.prop != PROP_HE).max_by_key(|n| n.injectors.len())?;
