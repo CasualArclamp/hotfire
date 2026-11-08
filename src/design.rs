@@ -678,6 +678,29 @@ mod tests {
     }
 
     #[test]
+    fn valves_say_where_they_go() {
+        // the gas-generator aerospike: two main valves feed the chamber, two feed the generator
+        let mut w = World::new();
+        w.load_preset(12);
+        for _ in 0..10 {
+            w.update(&Readback::default(), 1.0 / 60.0);
+        }
+        let labels: Vec<String> = (0..w.valves.len()).map(|k| w.valve_label(k)).collect();
+        // and a Merlin-style engine: the generator's valves and the main ones
+        let mut m = World::new();
+        m.load_preset(6);
+        for _ in 0..10 {
+            m.update(&Readback::default(), 1.0 / 60.0);
+        }
+        let ml: Vec<String> = (0..m.valves.len()).map(|v| m.valve_label(v)).collect();
+        assert_eq!(ml.iter().filter(|l| l.contains("to gas generator")).count(), 2, "{ml:?}");
+        assert_eq!(ml.iter().filter(|l| l.contains("to main chamber")).count(), 2, "{ml:?}");
+        let n_gg = labels.iter().filter(|l| l.contains("to gas generator")).count();
+        let n_ch = labels.iter().filter(|l| l.contains("to main chamber")).count();
+        assert_eq!((n_gg, n_ch), (2, 2), "{labels:?}");
+    }
+
+    #[test]
     fn pumped_aerospikes_are_plumbed() {
         // the electric and the gas-generator aerospikes: both feeds through the pumps on one shaft inside the spike, and (gas
         // generator) a generator that the turbine's drive gas runs from, with its valves opened by the start sequence

@@ -991,6 +991,7 @@ pub struct World {
     pub blocks: Vec<Block>,
     pub block_of: Vec<u8>,
     pub valves: Vec<ValveGroup>,
+    pub valve_dests: Vec<u8>, // where each valve leads: bit 0 the main chamber, bit 1 a gas generator (see compute_valve_dests)
     pub valve_of: Vec<u16>,
     pub phase: Vec<f32>,
     pub phase_dirty: bool,
@@ -1096,6 +1097,7 @@ impl World {
             blocks: vec![],
             block_of: vec![255; N],
             valves: vec![],
+            valve_dests: vec![],
             valve_of: vec![NO_NET; N],
             phase: vec![0.0; N],
             phase_dirty: true,
@@ -1606,13 +1608,130 @@ impl World {
         Some(format!("burning {:.2} kg/s fuel + {:.2} kg/s oxidiser, O/F {:.2}\nhot gas {:.0} K out of the open face", mf, mo, mo / mf.max(1e-6), t_flame(&pr, mo / mf.max(1e-6))))
     }
 
-    /// A valve's name for lists: what it carries, and where it is.
+    /// Where a valve sends its propellant: the main chamber (the injectors), a gas generator, or both (cached by rebuild_nets).
+    pub fn valve_dest(&self, k: usize) -> Option<&'static str> {
+        match self.valve_dests.get(k).copied().unwrap_or(0) {
+            1 => Some("main chamber"),
+            2 => Some("gas generator"),
+            3 => Some("chamber and GG"),
+            _ => None,
+        }
+    }
+
+    /// Work out where each valve leads. Valves are treated as open (so the answer is the same whichever state they are in), the
+    /// line is followed out of each side of the valve without crossing it, and the side without a tank is where it goes: the
+    /// injectors there make it a main-chamber valve, a gas generator touching that line a generator valve.
+    fn compute_valve_dests(&mut self) {
+        let (cells, back, front) = (&self.cells, &self.back, &self.front);
+        let lt = |l: usize, i: usize| -> u8 {
+            match l {
+                0 => cells[i],
+                1 => back[i],
+                _ => front[i],
+            }
+        };
+        let line = |t: u8| c::plumbing(t) || c::is_valve(t);
+        let mut out = vec![];
+        for v in &self.valves {
+            let mut sides: Vec<(bool, bool, bool)> = vec![]; // (tank, injectors, generator) for each side
+            let mut done: std::collections::HashSet<usize> = std::collections::HashSet::new();
+            for &vi in &v.cells {
+                let (x, y) = (vi % W, vi / W);
+                for (nx, ny) in [(x + 1, y), (x.wrapping_sub(1), y), (x, y + 1), (x, y.wrapping_sub(1))] {
+                    if nx >= W || ny >= H {
+                        continue;
+                    }
+                    let s0 = Self::idx(nx, ny);
+                    if done.contains(&s0) || v.cells.contains(&s0) || !line(cells[s0]) {
+                        continue;
+                    }
+                    let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
+                    let mut stack = vec![s0];
+                    seen.insert(s0);
+                    let (mut tank, mut inj, mut gen_hd) = (false, false, false);
+                    while let Some(nd) = stack.pop() {
+                        let (l, i) = (nd / N, nd % N);
+                        let t = lt(l, i);
+                        tank |= matches!(t, c::TANK_F | c::TANK_O);
+                        inj |= t == c::INJ;
+                        let (x, y) = ((i % W) as i32, (i / W) as i32);
+                        for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                            let (nx, ny) = (x + dx, y + dy);
+                            if nx < 0 || ny < 0 || nx >= W as i32 || ny >= H as i32 {
+                                continue;
+                            }
+                            let j = Self::idx(nx as usize, ny as usize);
+                            if l == 0 && matches!(cells[j], c::GG | c::BURNER) && matches!(t, c::PIPE | c::JOINT) {
+                                gen_hd = true;
+                            }
+                            // pipes into and out of the same turbine are one line (an expander's fuel runs through the wheel)
+                            if l == 0 && cells[j] == c::TURBINE && matches!(t, c::PIPE | c::JOINT) {
+                                let mut tseen = vec![j];
+                                let mut ti = 0;
+                                while ti < tseen.len() {
+                                    let (tx, ty) = (tseen[ti] % W, tseen[ti] / W);
+                                    ti += 1;
+                                    for (ax, ay) in [(tx + 1, ty), (tx.wrapping_sub(1), ty), (tx, ty + 1), (tx, ty.wrapping_sub(1))] {
+                                        if ax < W && ay < H {
+                                            let a = Self::idx(ax, ay);
+                                            if cells[a] == c::TURBINE && !tseen.contains(&a) {
+                                                tseen.push(a);
+                                            } else if matches!(cells[a], c::PIPE | c::JOINT) && seen.insert(a) {
+                                                stack.push(a);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            let nn = l * N + j;
+                            if !seen.contains(&nn) && !v.cells.contains(&j) && line(lt(l, j)) && line(t) && !((t == c::TANK_F && lt(l, j) == c::TANK_O) || (t == c::TANK_O && lt(l, j) == c::TANK_F)) {
+                                seen.insert(nn);
+                                stack.push(nn);
+                            }
+                        }
+                        if t == c::JOINT && l == 0 {
+                            for l2 in [1usize, 2] {
+                                if line(lt(l2, i)) && seen.insert(l2 * N + i) {
+                                    stack.push(l2 * N + i);
+                                }
+                            }
+                        } else if l > 0 && cells[i] == c::JOINT && seen.insert(i) {
+                            stack.push(i);
+                        }
+                    }
+                    for &nd in &seen {
+                        if nd < N {
+                            done.insert(nd);
+                        }
+                    }
+                    sides.push((tank, inj, gen_hd));
+                }
+            }
+            // (the side with the tank is upstream; with no tank on either side, every side counts)
+            let any_tank = sides.iter().any(|s| s.0);
+            let (mut ch, mut gg) = (false, false);
+            for s in sides.iter().filter(|s| !any_tank || !s.0) {
+                ch |= s.1;
+                gg |= s.2;
+            }
+            out.push(ch as u8 | (gg as u8) << 1);
+        }
+        self.valve_dests = out;
+    }
+
+    /// A valve's name for lists: what it carries, where it goes, and where it is.
     pub fn valve_label(&self, k: usize) -> String {
         let v = &self.valves[k];
         let i = v.cells[0];
         match self.net_around(i) {
-            Some(n) => format!("{} valve ({}) at ({}, {})", if v.prop == 0 { "Fuel" } else { "Oxidiser" }, self.fluid_name(n, false), i % W, i / W),
-            None => v.label(),
+            Some(n) => match self.valve_dest(k) {
+                Some(d) => format!("{} valve ({}) to {} at ({}, {})", if v.prop == 0 { "Fuel" } else { "Oxidiser" }, self.fluid_name(n, false), d, i % W, i / W),
+                None => format!("{} valve ({}) at ({}, {})", if v.prop == 0 { "Fuel" } else { "Oxidiser" }, self.fluid_name(n, false), i % W, i / W),
+            },
+            None => match self.valve_dest(k).filter(|_| v.prop != PROP_HE) {
+                Some(d) => v.label().replacen(" valve", &format!(" valve to {d}"), 1),
+                None => v.label(),
+            },
         }
     }
 
@@ -2716,6 +2835,7 @@ impl World {
                 s.gas_driven = false;
             }
         }
+        self.compute_valve_dests();
     }
 
     /// Pipes on the back (1) or front (2) layer: only fuel / oxidiser lines, or erase.
