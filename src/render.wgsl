@@ -241,8 +241,8 @@ const A_VAP: u32 = 1856u;    // must match world::ANIM_VAP
 const A_BURN: u32 = 2112u;   // must match world::ANIM_BURN
 const A_AIR: u32 = 2121u;    // must match world::ANIM_AIR
 const A_PLUME: u32 = 2124u;  // must match world::ANIM_PLUME
-const A_TEA: u32 = 2141u;    // must match world::ANIM_TEA
-const A_NOZ: u32 = 2208u;    // must match world::ANIM_NOZ (A_TEA + 3 + 64)
+const A_TEA: u32 = 2142u;    // must match world::ANIM_TEA
+const A_NOZ: u32 = 2209u;    // must match world::ANIM_NOZ (A_TEA + 3 + 64)
 
 // what a network holds: 0 fuel, 1 oxidiser, 2 both (mixed), 9 nothing
 fn net_prop(net: u32) -> u32 {
@@ -462,7 +462,9 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
     let kg = 0.5 * (gam - 1.0);
     let pt_pa = pow(1.0 + kg * mach * mach, gam / (gam - 1.0)) * ratio;
     let Mj = clamp(sqrt(max((pow(pt_pa, (gam - 1.0) / gam) - 1.0) / kg, 1.0)), 1.05, 6.0);
-    let Dj = De * clamp(sqrt((mach / Mj) * pow((1.0 + kg * Mj * Mj) / (1.0 + kg * mach * mach), (gam + 1.0) / (2.0 * (gam - 1.0)))), 0.45, 2.5);
+    // (the area ratio of the fully expanded jet to the exit: the width ratio in the planar simulation, its square for a round engine)
+    let area_j = (mach / Mj) * pow((1.0 + kg * Mj * Mj) / (1.0 + kg * mach * mach), (gam + 1.0) / (2.0 * (gam - 1.0)));
+    let Dj = De * clamp(select(area_j, sqrt(area_j), anim[A_PLUME + 17u] > 0.5), 0.45, 2.5);
     // Prandtl-Pack shock cell length, 1.306 Dj sqrt(Mj^2 - 1): 3 to 6 exit diameters for these nozzles, against about 1.5 in
     // photographs of real engines (hot, low-gamma exhaust and a non-uniform exit flow shorten the cells), so it is scaled
     // by 0.45 to match them, keeping the formula's trend with Mach number and pressure ratio.
@@ -476,6 +478,9 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
     // it bulges first. ov is 0 for the first and 1 for the second. Below about 0.4 of the air's pressure (the Summerfield
     // criterion) the flow separates inside the bell and the jet becomes ragged and unsteady (sep).
     let ov = smoothstep(-0.25, 0.25, lr);
+    // (the design rule for this game: a train of diamonds only when the exhaust is under-expanded, 0 when over-expanded; an
+    // over-expanded jet is pinched, with a single Mach disk where the flow separates)
+    let ue = smoothstep(0.02, 0.3, lr);
     let sep = anim[A_PLUME + 16u]; // 0..1: how far into flow separation (see world::find_plume)
     let tj = r.time - 60.0 * floor(r.time / 60.0);
     let th0 = clamp(0.30 * lr, -0.3, 0.95);
@@ -507,7 +512,7 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
         // the jet relaxes from the exit's width towards that of the fully expanded jet (narrower when over-expanded, wider when
         // under-expanded), and the cells swing about that, more the further the exhaust is from matched pressure
         let Rb = mix(hwj, 0.5 * Dj, 1.0 - exp(-sp / (1.2 * Ls))) + 0.012 * sp;
-        let amp6 = clamp(0.05 + 0.5 * abs(log(Dj / De)), 0.04, 0.4) * exp(-sp / (3.0 * Ls)) * (1.0 - 0.5 * sep);
+        let amp6 = clamp(0.05 + 0.5 * abs(log(Dj / De)), 0.04, 0.4) * exp(-sp / (3.0 * Ls)) * (1.0 - 0.5 * sep) * mix(0.2, 1.0, ue);
         R = max(Rb * (1.0 + amp6 * sin(ph)), 0.3 * hwj);
     }
     // turbulence: big slow eddies swing the plume sideways (more the further out), smaller ones tear its edge
@@ -613,8 +618,10 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
         let heart = exp(-pow(dx / (0.3 * wdt + 1.0), 2.0));
         let lenf = exp(-pow((t - 0.2) / select(0.3, 0.14, t < 0.2), 2.0));
         sh = (0.8 * tear + 0.7 * heart * (0.5 + 0.5 * lead)) * lenf * strength * cdk * 1.9 * mix(0.5, 1.0, fl);
-        sh = sh * (0.9 + 0.2 * fbm(vec2<f32>(tj * 5.0, sp * 0.01 + 3.0))); // (the diamonds shimmer)
-        shl = exp(-pow((abs(dx) - 1.15 * R * pow(t / 0.75, 0.75)) / (0.025 * R + 0.7), 2.0)) * smoothstep(0.8, 0.3, t) * smoothstep(0.02, 0.1, t) * smoothstep(1.1, 0.8, q) * strength * cdk * 0.5;
+        sh = sh * (0.9 + 0.2 * fbm(vec2<f32>(tj * 5.0, sp * 0.01 + 3.0))) * ue; // (the diamonds shimmer; none when over-expanded)
+        // over-expanded: one Mach disk, a soft glow at the first pinch, where the separated flow's shock meets the axis
+        sh = sh + (1.0 - ue) * sep * 0.55 * exp(-pow((sp - 0.25 * Ls) / (0.1 * Ls + 2.0), 2.0)) * smoothstep(0.7, 0.0, q) * mix(0.5, 1.0, fl);
+        shl = exp(-pow((abs(dx) - 1.15 * R * pow(t / 0.75, 0.75)) / (0.025 * R + 0.7), 2.0)) * smoothstep(0.8, 0.3, t) * smoothstep(0.02, 0.1, t) * smoothstep(1.1, 0.8, q) * strength * cdk * 0.5 * ue;
         bodyk = 0.9;
     } else {
         // compression glow: no drawn shapes, the light follows the gas density as the jet pinches and swells, with the

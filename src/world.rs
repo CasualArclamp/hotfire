@@ -42,8 +42,8 @@ pub const ANIM_BOIL: usize = ANIM_HE + MAX_BLOCKS; // per-network boiling intens
 pub const ANIM_VAP: usize = ANIM_BOIL + 256; // per-network ullage vapour density for drawing (0..1)
 pub const ANIM_BURN: usize = ANIM_VAP + 256; // the burner blocks: how many (up to 8), then their block numbers
 pub const ANIM_AIR: usize = ANIM_BURN + 9; // the wind past the vehicle (m/s down the screen), ambient density against sea level
-pub const ANIM_PLUME: usize = ANIM_AIR + 3; // the stylised exhaust plume: on, exit x, exit y, half width, exit speed, Pe/Pa, Mach, flame temperature, intensity, throat y, purge cloud, green TEA-TEB exhaust glow, chamber top y, diamond style, how hard the engine is running (0..1), jet half width after any flow separation, separation severity (0..1)
-pub const ANIM_TEA: usize = ANIM_PLUME + 17; // the TEA-TEB flash (x, y, how bright), then 1 for each bottle that holds TEA-TEB
+pub const ANIM_PLUME: usize = ANIM_AIR + 3; // the stylised exhaust plume: on, exit x, exit y, half width, exit speed, Pe/Pa, Mach, flame temperature, intensity, throat y, purge cloud, green TEA-TEB exhaust glow, chamber top y, diamond style, how hard the engine is running (0..1), jet half width after any flow separation, separation severity (0..1), 1 for a round (axisymmetric) engine
+pub const ANIM_TEA: usize = ANIM_PLUME + 18; // the TEA-TEB flash (x, y, how bright), then 1 for each bottle that holds TEA-TEB
 /// Wall pressure over ambient below which the flow in an over-expanded bell separates (Summerfield criterion, about 0.35 to 0.4).
 pub const SEPARATION_P: f32 = 0.4;
 
@@ -1020,7 +1020,7 @@ pub struct World {
     pub fx_style: u32,      // which Mach-diamond style the plume shader draws (see PLUME_STYLES)
     pub fx_plume: bool,     // draw the exhaust as a plume shader (off: just the gas simulation's own picture)
     pub noz: Vec<f32>,      // (left, right) gas cell of each row of the main engine's passage, from the injector row (see ANIM_NOZ)
-    pub plume: [f32; 17],   // what the plume shader needs (see ANIM_PLUME)
+    pub plume: [f32; 18],   // what the plume shader needs (see ANIM_PLUME)
     pub air_phase: f32,     // how far the air streaks have travelled (adds up the wind, so a change of speed never makes them jump)
     pub flight: bool,       // the vehicle flies: thrust, weight and drag move it, and the altitude follows
     pub vel: f32,           // vertical speed, m/s (up is positive)
@@ -1124,7 +1124,7 @@ impl World {
             fx_style: 6, // (the style matched to photographs: see PLUME_STYLES)
             fx_plume: true,
             noz: Vec::new(),
-            plume: [0.0; 17],
+            plume: [0.0; 18],
             air_phase: 0.0,
             flight: false,
             vel: 0.0,
@@ -2843,7 +2843,7 @@ impl World {
         a[ANIM_AIR] = self.wind();
         a[ANIM_AIR + 1] = (self.st.amb_p / 101325.0).clamp(0.0, 1.0);
         a[ANIM_AIR + 2] = self.air_phase;
-        a[ANIM_PLUME..ANIM_PLUME + 17].copy_from_slice(&self.plume);
+        a[ANIM_PLUME..ANIM_PLUME + 18].copy_from_slice(&self.plume);
         for (k, v) in self.noz.iter().enumerate().take(2 * NOZ_ROWS) {
             a[ANIM_NOZ + k] = *v;
         }
@@ -2878,8 +2878,8 @@ impl World {
 
     /// Where the main nozzle ends and what the gas is doing there, for the plume shader: walk down from a
     /// gas cell of the chamber while the gas is walled in on both sides; the row below the last one is the exit.
-    fn find_plume(&self, rb: &Readback, noz: &mut Vec<f32>) -> [f32; 17] {
-        let mut out = [0.0f32; 17];
+    fn find_plume(&self, rb: &Readback, noz: &mut Vec<f32>) -> [f32; 18] {
+        let mut out = [0.0f32; 18];
         let Some(&(_, gc)) = self.nets.iter().filter(|n| n.prop != PROP_HE).max_by_key(|n| n.injectors.len()).and_then(|n| n.injectors.first()) else { return out };
         let (mut xc, y0) = (gc % W, gc / W);
         let mut last: Option<(usize, usize, usize)> = None;
@@ -2941,9 +2941,10 @@ impl World {
         out[12] = y0 as f32; // the injector row: the top of the chamber
         // Flow separation. Where the isentropic wall pressure in the bell falls below about 0.4 of the air's (the Summerfield
         // criterion) the flow lets go of the wall, so the jet leaves the nozzle with the width, Mach number and pressure it had
-        // at that row, narrower than the exit. The pressure at each row comes from the bell's own contour (area ratio, round
-        // engine assumed) and the chamber pressure.
+        // at that row, narrower than the exit. The pressure at each row comes from the bell's own contour (area ratio: the width ratio in the planar
+        // simulation, its square for a round engine) and the chamber pressure.
         out[15] = hw;
+        out[17] = self.st.axi as u8 as f32;
         let (pt, pa) = (self.g.chamber_p, self.st.amb_p);
         let nrows = noz.len() / 2;
         if pt > 5.0e4 && pa > 1.0e3 && nrows >= 15 && throat_y >= y0 && throat_y - y0 < nrows {
@@ -2952,7 +2953,7 @@ impl World {
             let width = |k: usize| noz[2 * k + 1] - noz[2 * k] + 1.0;
             let wt = width(k_t).max(1.0);
             let row = |k: usize| -> (f32, f32) {
-                let m = mach_from_area((width(k) / wt).powi(2).max(1.0), gam);
+                let m = mach_from_area((width(k) / wt).powi(if self.st.axi { 2 } else { 1 }).max(1.0), gam);
                 (pt * p_over_pt(m, gam), m)
             };
             let p_exit = row(nrows - 1).0;

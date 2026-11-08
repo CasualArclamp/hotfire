@@ -188,6 +188,9 @@ copy target\release\rocket_sandbox.exe hotfire\Hotfire.exe
   **Turn it off for the full simulation**: the gas exactly as the solver has it, with no plume shader, no purge cloud and no
   recolouring in the bell (a TEA-TEB start still burns green, and cold cryogenic vapour still turns to mist, since both
   come from the simulation). On a fast GPU, raise *gas steps per 1/60 s* (Simulation) so the far plume fills in.
+  Diamonds only form when the exhaust is **under-expanded** (exit pressure above the air's: at altitude, or a short bell
+  at sea level). Over-expanded, as a big vacuum bell is at sea level, the jet is squeezed into a pinched column with one weak
+  Mach disk where the flow separates; at matched pressure it is a clean column.
   Throttling changes the whole picture: chamber pressure sets how over- or under-expanded the exhaust is, which moves the
   pinches (the Mach disks), the jet's width, the cell length and strength, and how long it glows. When the wall pressure in
   the bell falls below about 0.4 of the air's (the Summerfield criterion), found from the bell's own contour and the chamber
