@@ -1,6 +1,6 @@
 [package]
 name = "rocket_sandbox"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 description = "Hotfire: build, plumb, light and fly a liquid-fuel rocket engine in a cell-by-cell gas simulation"
 license = "GPL-3.0-or-later"
