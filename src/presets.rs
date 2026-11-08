@@ -374,7 +374,20 @@ pub fn presets() -> Vec<EngineSpec> {
         ox_trim: 0.9,
         ..aerospike.clone()
     };
-    vec![hydrolox, hydrolox_gg, kerolox, hypergolic, dump_to_nozzle, staged, f1, rl10, rutherford, tripropellant, aerospike, aerospike_pumped, aerospike_gg]
+    // The expander cycle as the textbook diagram draws it: one turbopump, the fuel pump, the turbine and the oxidiser pump on a
+    // single shaft, the turbine driven by the fuel the regen jacket has warmed, which then goes on to the injectors.
+    let hydrolox_exp1 = EngineSpec {
+        name: "Hydrolox expander, one turbopump",
+        blurb: "The closed expander cycle as in the textbook diagram: fuel pump, turbine and oxidiser pump on one shaft, the turbine driven by the hydrogen the regen jacket has heated, which then goes to the injectors",
+        single_shaft: true,
+        twin_shaft: false,
+        ox_head: 3.0,
+        turb_mult: 30.0,
+        fuel_tp: Some(TpSpec { pump_d: 24, stages: 2, turb_d: 24, turb_l: 20 }),
+        ox_tp: Some(TpSpec { pump_d: 22, stages: 1, turb_d: 24, turb_l: 20 }),
+        ..hydrolox.clone()
+    };
+    vec![hydrolox, hydrolox_gg, kerolox, hypergolic, dump_to_nozzle, staged, f1, rl10, rutherford, tripropellant, aerospike, aerospike_pumped, aerospike_gg, hydrolox_exp1]
 }
 
 fn hydrolox_clone() -> EngineSpec {
@@ -460,7 +473,7 @@ impl World {
         let d_o = ((2.0 * r_o).round() as i32).max(6);
         let l_o = ((0.6 * (d_o * otp.stages) as f32).round() as i32).max(3);
         // an electric motor is long and thin (its power goes with its volume, its speed with its diameter)
-        let (d_t, l_t) = (ftp.turb_d.max(otp.turb_d).max(d_f).max(d_o), if e.electric { ftp.turb_l } else { 12 });
+        let (d_t, l_t) = (ftp.turb_d.max(otp.turb_d).max(d_f).max(d_o), if e.electric || !e.gg { ftp.turb_l } else { 12 });
         let drive = if e.electric { c::MOTOR } else { c::TURBINE };
         let (y_o, y_t) = (30, 30 + l_o);
         let (y_f, y_fe) = (y_t + l_t, y_t + l_t + l_f - 1);
@@ -496,6 +509,37 @@ impl World {
         if e.electric {
             // battery pack against the motor's right face (touching cells are wired together)
             self.rect(tx1 + 1, y_t, tx1 + 59, y_f - 1, c::BATTERY);
+        } else if !e.gg {
+            // Closed expander cycle, as in the textbook diagram: fuel pump, turbine and oxidiser pump on one shaft. The fuel goes
+            // pump -> main valve -> up the regen jacket -> (both jacket tops joined by a back-layer line over the head) the
+            // turbine's left face -> out of its right face -> back layer over to the left injector manifold, and a back-layer
+            // line behind the oxidiser manifold feeds the right one.
+            fill_empty(self, tx1 + 1, y_t, tx1 + 1, y_f - 1, c::STEEL);
+            // the jacket tops empty into stubs, not into the injector manifolds
+            self.rect(100, 60, 103, 60, c::STEEL);
+            self.rect(152, 60, 155, 60, c::STEEL);
+            self.rect(100, 61, 101, 61, c::PIPE);
+            self.rect(154, 61, 155, 61, c::PIPE);
+            self.rect(98, 50, 99, 61, c::PIPE);
+            self.rect(156, 50, 157, 61, c::PIPE);
+            self.rect(98, 50, 99, 51, c::JOINT);
+            self.rect(156, 50, 157, 51, c::JOINT);
+            back.push((98, 50, 157, 51));
+            // collector -> the turbine's left face
+            let yc = y_t + 4;
+            self.rect(158, 50, 160, 51, c::PIPE);
+            self.rect(160, yc.min(50), 161, yc.max(51), c::PIPE);
+            self.rect(160, yc, tx0 - 1, yc + 1, c::PIPE);
+            // the turbine's right face -> a back-layer line over to the left injector manifold, and across behind the oxidiser one
+            let yr = y_t + 3;
+            self.rect(tx1 + 1, yr, tx1 + 2, yr + 1, c::PIPE);
+            self.rect(tx1 + 3, yr, tx1 + 4, yr + 1, c::JOINT);
+            self.rect(117, yr, 118, yr + 1, c::JOINT);
+            back.push((117, yr, tx1 + 4, yr + 1));
+            self.rect(117, yr + 2, 118, 59, c::PIPE);
+            self.rect(108, 60, 109, 60, c::JOINT);
+            self.rect(146, 60, 147, 60, c::JOINT);
+            back.push((108, 60, 147, 60));
         } else {
         fill_empty(self, tx1 + 1, cy0 - 2, hx + 2, cy1 + 2, c::STEEL);
         self.rect(gc0, cy0, gc1, cy1, c::EMPTY);
