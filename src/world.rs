@@ -1020,6 +1020,7 @@ pub struct World {
     pub teateb_at: usize,    // ... in this gas cell
     pub tea_age: f32,        // seconds since the TEA-TEB first reached an injector (the exhaust burns green for the first second or so)
     pub purge_vis: f32,      // the cold-gas purge cloud at the nozzle exit (0..1): rises while the start purge runs, thins away after it
+    pub stab_geom: Option<(f32, f32)>, // where the jet stabiliser starts: the exit row and the half width of the exhaust (also found for an aerospike, which has no bell for the plume code to find)
     pub stable_jet: bool,   // damp the exhaust's sideways swinging far below the nozzle (the jet stabiliser, see sim.wgsl)
     pub pc_ref: f32,        // the chamber pressure the engine has been running at lately (a slowly decaying peak), to find how far it is throttled
     pub fx_style: u32,      // which Mach-diamond style the plume shader draws (see PLUME_STYLES)
@@ -1125,6 +1126,7 @@ impl World {
             teateb_at: 0,
             tea_age: 99.0,
             purge_vis: 0.0,
+            stab_geom: None,
             stable_jet: true,
             pc_ref: 0.0,
             fx_style: 6, // (the style matched to photographs: see PLUME_STYLES)
@@ -1570,9 +1572,9 @@ impl World {
         p.amb_k = self.amb_k;
         p.amb_v = self.wind();
         // the jet stabiliser starts one exit diameter below the nozzle exit
-        if self.plume[0] > 0.5 {
-            p.stab_y = self.plume[2] + 2.0 * self.plume[3];
-            p.stab_r = 10.0 * self.plume[3]; // fully on about six exit diameters down
+        if let Some((ye, hw)) = self.stab_geom {
+            p.stab_y = ye + 2.0 * hw;
+            p.stab_r = 10.0 * hw; // fully on about six exit diameters down
             p.stab_k = if self.stable_jet { JET_STABILISER } else { 0.0 };
         }
         p
@@ -2930,6 +2932,14 @@ impl World {
         let pr = self.blended_prop();
         let hw = (r - l + 1) as f32 * 0.5;
         let xcf = (l + r) as f32 * 0.5 + 0.5;
+        // the stylised plume draws one round nozzle: if the injectors are not centred on the passage found (an aerospike's two
+        // slots, either side of its spike), there is no such nozzle, and the simulation's own picture is left to show
+        if let Some(n) = self.nets.iter().filter(|n| n.prop != PROP_HE).max_by_key(|n| n.injectors.len()) {
+            let mean = n.injectors.iter().map(|&(_, g)| (g % W) as f32 + 0.5).sum::<f32>() / n.injectors.len().max(1) as f32;
+            if (mean - xcf).abs() > 0.5 * hw + 3.0 {
+                return out;
+            }
+        }
         let (mut speed, mut pe, mut mach) = (0.0, self.st.amb_p, 1.0);
         if rb.valid {
             let s = rb.state[Self::idx((l + r) / 2, y)];
@@ -2979,6 +2989,27 @@ impl World {
             }
         }
         out
+    }
+
+    /// Where the jet stabiliser starts: below the exit of the bell the plume code found, or, for an engine with no bell to find (an
+    /// aerospike), below the tip of the spike down the middle of its injectors, with the span of the injectors as the width.
+    pub fn find_stab_geom(&self) -> Option<(f32, f32)> {
+        if self.plume[0] > 0.5 {
+            return Some((self.plume[2], self.plume[3]));
+        }
+        let n = self.nets.iter().filter(|n| n.prop != PROP_HE).max_by_key(|n| n.injectors.len())?;
+        let xs: Vec<usize> = n.injectors.iter().map(|&(_, g)| g % W).collect();
+        let (xmin, xmax) = (*xs.iter().min()?, *xs.iter().max()?);
+        let y0 = n.injectors.iter().map(|&(_, g)| g / W).min()?;
+        let xm = (xmin + xmax) / 2;
+        let mut y = y0;
+        while y + 1 < H && self.cells[Self::idx(xm, y)] != c::EMPTY {
+            y += 1;
+        }
+        if y - y0 < 15 || y + 1 >= H {
+            return None;
+        }
+        Some((y as f32, (xmax - xmin) as f32 * 0.5 + 0.5))
     }
 
     /// The air speed past the vehicle, m/s down the screen: flying up the air rushes down past the engine,
@@ -3046,6 +3077,7 @@ impl World {
         self.noz = noz;
         self.plume[10] = self.purge_vis;
         self.plume[13] = self.fx_style as f32;
+        self.stab_geom = self.find_stab_geom();
         // how hard the engine is running: chamber pressure against its recent peak (about the flow, and so the thrust)
         self.pc_ref = (self.pc_ref * (1.0 - dt_sim / 90.0)).max(self.g.chamber_p);
         self.plume[14] = if self.pc_ref > 2.0e5 { (self.g.chamber_p / self.pc_ref).clamp(0.0, 1.0) } else { 1.0 };

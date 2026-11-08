@@ -648,6 +648,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn aerospike_preset_feeds_both_slots() {
+        let mut w = World::new();
+        w.load_preset(10);
+        // (the main valves start shut, which splits each network at the valve: open them and let the plumbing settle)
+        w.command_all(0, true);
+        w.command_all(1, true);
+        for _ in 0..180 {
+            w.update(&Readback::default(), 1.0 / 60.0);
+        }
+        // a fuel and an oxidiser network, each with injectors in both slot chambers, either side of the spike
+        let nets: Vec<_> = w.nets.iter().filter(|n| n.prop <= 1 && !n.injectors.is_empty()).collect();
+        assert_eq!(nets.len(), 2, "expected one fuel and one oxidiser network");
+        let cx = W / 2;
+        for n in &nets {
+            let xs: Vec<usize> = n.injectors.iter().map(|&(_, g)| g % W).collect();
+            assert!(*xs.iter().min().unwrap() + 15 < cx && *xs.iter().max().unwrap() > cx + 15, "injectors on only one side");
+            assert!(n.tank_cells > 0, "network not connected to a tank");
+        }
+        // the spike is solid down the middle, and the stabiliser finds its tip (there is no bell for the plume code to find)
+        let top = crate::presets::PRESET_OY;
+        assert_ne!(w.cells[World::idx(cx, top + 100)], c::EMPTY);
+        let (tip, half) = w.find_stab_geom().expect("a stabiliser anchor");
+        assert!(tip > (top + 200) as f32 && half > 20.0, "tip {tip}, half width {half}");
+    }
+
+    #[test]
     fn nozzle_area_mach_and_separation() {
         use crate::world::{area_ratio, mach_from_area, p_over_pt, SEPARATION_P};
         // area ratio and Mach are inverses of each other, and pressure falls as the bell widens

@@ -57,6 +57,7 @@ pub struct EngineSpec {
     pub tri_p: f32,      // ... held at this pressure, Pa
     pub tri_inj: f32,    // ... and its injector area, cm2 a cell
     pub burner: bool,    // the gas generator is a burner block (a machine drawn as a cutaway) instead of an injector plate
+    pub plug: bool,      // a linear aerospike (plug nozzle): two slot chambers either side of a central spike, instead of a bell
 }
 
 pub fn presets() -> Vec<EngineSpec> {
@@ -101,6 +102,7 @@ pub fn presets() -> Vec<EngineSpec> {
         tri_p: 0.0,
         tri_inj: 0.0,
         burner: false,
+        plug: false,
     };
     let hydrolox_gg = EngineSpec {
         name: "J-2",
@@ -113,6 +115,7 @@ pub fn presets() -> Vec<EngineSpec> {
         twin_shaft: true,
         inj: Some((0.40, 3.1)), // injector areas for its lower chamber pressure and mixture ratio 5.5
         burner: true,
+        plug: false,
         ..hydrolox_clone()
     };
     let kerolox = EngineSpec {
@@ -156,6 +159,7 @@ pub fn presets() -> Vec<EngineSpec> {
         tri_p: 0.0,
         tri_inj: 0.0,
         burner: true,
+        plug: false,
     };
     let hypergolic = EngineSpec {
         name: "Hypergolic pressure-fed",
@@ -198,6 +202,7 @@ pub fn presets() -> Vec<EngineSpec> {
         tri_p: 0.0,
         tri_inj: 0.0,
         burner: false,
+        plug: false,
     };
     let dump_to_nozzle = EngineSpec {
         name: "Hydrolox GG, exhaust into nozzle",
@@ -211,6 +216,7 @@ pub fn presets() -> Vec<EngineSpec> {
         twin_shaft: true,
         inj: Some((0.95, 2.2)), // oxidiser injectors trimmed for the two-shaft powerhead's pump balance
         burner: true,
+        plug: false,
         ..hydrolox_clone()
     };
     let staged = EngineSpec {
@@ -226,6 +232,7 @@ pub fn presets() -> Vec<EngineSpec> {
         inj: Some((0.95, 2.8)), // oxidiser injectors trimmed for the two-shaft powerhead's pump balance
         feed_p_max: 1.7e7, // the turbine bypass holds pump discharge here, so the chamber pressure can't creep up
         burner: true,
+        plug: false,
         ..hydrolox_clone()
     };
     let f1 = EngineSpec {
@@ -244,6 +251,7 @@ pub fn presets() -> Vec<EngineSpec> {
         tri_p: 0.0,
         tri_inj: 0.0,
         burner: true,
+        plug: false,
         tank_p: (4.5e5, 6.0e5),
         dx: 0.025,
         depth: 1.8,
@@ -289,6 +297,7 @@ pub fn presets() -> Vec<EngineSpec> {
         tri_p: 0.0,
         tri_inj: 0.0,
         burner: false,
+        plug: false,
         ..hydrolox_clone()
     };
     let tripropellant = EngineSpec {
@@ -319,9 +328,23 @@ pub fn presets() -> Vec<EngineSpec> {
         tri_p: 9.5e6,
         tri_inj: 0.09,
         burner: false,
+        plug: false,
         ..hydrolox_clone()
     };
-    vec![hydrolox, hydrolox_gg, kerolox, hypergolic, dump_to_nozzle, staged, f1, rl10, rutherford, tripropellant]
+    // A linear aerospike (as on the X-33's XRS-2200): the exhaust leaves two throat slots either side of a central spike and
+    // expands against the spike's ramp, with only the open air for an outer wall, so the nozzle follows the altitude. Pressure-fed
+    // hypergolic, like the OMS-style engine, so it needs no pumps or igniter.
+    let aerospike = EngineSpec {
+        name: "Aerospike",
+        blurb: "Linear aerospike (plug nozzle, XRS-2200 style): MMH/N2O4 pressure-fed, two slot chambers either side of a central spike; the exhaust expands against the spike's ramp, so it adjusts to the altitude",
+        plug: true,
+        conv_start: 85.0,
+        throat_y: 105.0,
+        throat_hw: 5.0,
+        exit_y: 300.0,
+        ..hypergolic.clone()
+    };
+    vec![hydrolox, hydrolox_gg, kerolox, hypergolic, dump_to_nozzle, staged, f1, rl10, rutherford, tripropellant, aerospike]
 }
 
 fn hydrolox_clone() -> EngineSpec {
@@ -373,6 +396,7 @@ fn presets_base() -> EngineSpec {
         tri_p: 0.0,
         tri_inj: 0.0,
         burner: false,
+        plug: false,
     }
 }
 
@@ -1181,6 +1205,118 @@ impl World {
 
     /// Draw a complete engine: chamber + nozzle walls, injector head, plumbing, tanks and turbopumps.
     /// Every valve starts closed.
+    /// The linear aerospike's layout, in the preset frame (256 wide, the axis at x = 128): a central spike, a slot chamber either
+    /// side of it with the throat between the spike's shoulder and a short cowl lip, and the spike's ramp falling away below
+    /// the throat to a truncated base. The oxidiser manifolds are the inner halves of the slots (against the spike), joined by a
+    /// pipe over the top of the spike; the fuel manifolds are the outer halves, joined by a loop over the oxidiser tank. Feed,
+    /// valves, helium and regulators follow the pressure-fed layout. Returns the back-layer pipe runs.
+    fn aerospike_layout(&mut self, e: &EngineSpec) -> Vec<(i32, i32, i32, i32)> {
+        let cx = 128.0f32;
+        let (s0, cw, gap) = (24.0f32, 10.0f32, e.throat_hw); // spike half-width, slot width, throat gap of each slot
+        let (conv, ty) = (e.conv_start, e.throat_y);
+        // (a convex ramp, steep at the throat and flattening towards the axis, as on a real plug; 140 cells long and brought to
+        // a point, which tried out as well as any longer or truncated spike in the simulation)
+        let (q, ramp_l) = (2.0f32, 140.0f32);
+        let y_end = ty + ramp_l;
+        // the spike's surface: straight through the chamber, then a ramp that curves in towards the axis
+        let spike = |y: f32| -> f32 {
+            if y <= ty {
+                s0
+            } else {
+                s0 * (1.0 - ((y - ty) / ramp_l).min(1.0)).powf(q)
+            }
+        };
+        // the gas side of the outer wall: the slot, converging to the throat gap, then the cowl lip
+        let outer = |y: f32| -> f32 {
+            if y < conv {
+                s0 + cw
+            } else if y < ty {
+                let t = (y - conv) / (ty - conv);
+                (s0 + gap) + (cw - gap) * (0.5 + 0.5 * (PI * t).cos())
+            } else {
+                s0 + gap
+            }
+        };
+        let lip_end = ty + 8.0;
+        let (liner, shell) = (e.liner, e.shell);
+        for y in 58..=y_end as usize {
+            let yf = y as f32 + 0.5;
+            let si = spike(yf);
+            for x in 0..W {
+                let d = (x as f32 + 0.5 - cx).abs();
+                let v = if d < si {
+                    if d < si - liner { c::STEEL } else { e.liner_mat }
+                } else if yf < lip_end && d >= outer(yf) {
+                    // the outer wall, thinning to a point at the lip
+                    let th = (liner + shell) * (1.0 - 0.75 * ((yf - ty).max(0.0) / (lip_end - ty)));
+                    let dd = d - outer(yf);
+                    if dd < liner.min(th) {
+                        e.liner_mat
+                    } else if dd < th {
+                        c::STEEL
+                    } else {
+                        continue;
+                    }
+                } else {
+                    continue;
+                };
+                self.cells[World::idx(x, y)] = v;
+            }
+        }
+        // injector head: cap over both slots, then a manifold row and an injector row under it
+        self.rect(89, 58, 166, 59, c::STEEL);
+        for x in 94..=161usize {
+            let d = (x as f32 + 0.5 - cx).abs();
+            if d <= s0 || d >= s0 + cw {
+                continue; // (over the spike, or outside the slot)
+            }
+            let (m, inj) = if d < s0 + 5.0 {
+                (c::PIPE, c::INJ) // oxidiser, against the spike
+            } else if d < s0 + 6.0 {
+                (c::STEEL, c::STEEL) // divider
+            } else {
+                (c::PIPE, c::INJ) // fuel, outside
+            };
+            self.cells[World::idx(x, 60)] = m;
+            self.cells[World::idx(x, 61)] = inj;
+        }
+        // oxidiser: the tank, a main valve, and the pipe over the top of the spike joining the two inner manifolds
+        self.rect(108, 8, 147, 45, c::TANK_O);
+        self.rect(127, 46, 128, 56, c::PIPE);
+        self.rect(127, 57, 128, 57, c::VALVE_X);
+        self.rect(127, 58, 128, 59, c::PIPE);
+        self.rect(127, 58, 128, 58, c::THROTTLE);
+        self.rect(99, 60, 156, 60, c::PIPE);
+        // fuel: a loop over the top of the oxidiser tank from the outer manifold on the left to the one on the right
+        self.rect(94, 3, 95, 60, c::PIPE);
+        self.rect(160, 3, 161, 60, c::PIPE);
+        self.rect(94, 3, 161, 4, c::PIPE);
+        // helium: the bottle, and a regulator into each tank (oxidiser: across behind the fuel loop on the back layer;
+        // fuel: along the top and down the left side, also on the back layer)
+        let (h0, h1, h2, h3) = e.he;
+        self.rect(h0, h1, h2, h3, c::HE_TANK);
+        let (fx0, fy0, fx1, fy1) = e.fuel_tank;
+        let jx = 165;
+        self.rect(jx, h1 + 3, h0 - 1, h1 + 4, c::PIPE);
+        self.rect(jx, h1 + 3, jx + 1, h1 + 4, c::JOINT);
+        self.rect(149, h1 + 3, 150, h1 + 4, c::JOINT);
+        self.rect(148, h1 + 3, 148, h1 + 4, c::REG);
+        let hx = (h0 + h2) / 2;
+        let rx = (fx0 + fx1) / 2;
+        self.rect(hx, h1 - 1, hx + 1, h1 - 1, c::JOINT);
+        self.rect(rx - 1, fy0 - 2, rx, fy0 - 2, c::JOINT);
+        self.rect(rx - 1, fy0 - 1, rx, fy0 - 1, c::REG);
+        // fuel: the tank, a valve and a throttle on the riser, then along to the loop
+        self.rect(fx0, fy0, fx1, fy1, c::TANK_F);
+        self.rect(fx1 + 1, 160, 53, 161, c::PIPE);
+        let (sx, sy) = (52, 159);
+        self.rect(sx, 42, sx + 1, sy, c::PIPE);
+        self.rect(sx, sy - 3, sx + 1, sy - 2, c::VALVE_X);
+        self.rect(sx, sy - 5, sx + 1, sy - 5, c::THROTTLE);
+        self.rect(sx, 40, 95, 41, c::PIPE);
+        vec![(149, h1 + 3, jx + 1, h1 + 4), (hx, 0, hx + 1, h1 - 1), (2, 0, hx + 1, 1), (2, 0, 3, fy0 - 2), (2, fy0 - 3, rx, fy0 - 2)]
+    }
+
     pub fn build_engine(&mut self, e: &EngineSpec) {
         self.clear();
         let drive = if e.electric { c::MOTOR } else { c::TURBINE };
@@ -1225,6 +1361,8 @@ impl World {
             }
         };
         let (l1, l2, l3) = (e.liner, e.liner + e.jacket, e.liner + e.jacket + e.shell);
+        let plug_back = if e.plug { Some(self.aerospike_layout(e)) } else { None };
+        if !e.plug {
         for y in 58..=e.exit_y as usize {
             let h = hw(y as f32 + 0.5);
             for x in 0..W {
@@ -1264,7 +1402,10 @@ impl World {
                 self.cells[World::idx(x, 61)] = inj;
             }
         }
-        let back: Vec<(i32, i32, i32, i32)> = if e.single_shaft {
+        }
+        let back: Vec<(i32, i32, i32, i32)> = if let Some(b) = plug_back {
+            b
+        } else if e.single_shaft {
             self.single_shaft_layout(e, &hw)
         } else if e.twin_shaft {
             self.twin_shaft_layout(e, &hw)

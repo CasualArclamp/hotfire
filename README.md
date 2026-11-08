@@ -16,9 +16,9 @@ an animation.
 - **Build anything**: steel, copper liner and niobium walls, pipes on three layers, valves, throttle valves,
   regulators, tanks, helium and TEA-TEB bottles, turbopumps sized like real hardware, gas generators and burners,
   electric pumps and batteries. Copy, paste, stamp and undo. Save your designs.
-- **Ten presets to start from**: Merlin 1D, F-1, J-2, RL10, Rutherford, a hydrolox expander, hydrolox staged
-  combustion, a hydrolox gas generator that exhausts into the nozzle, a pressure-fed hypergolic engine and a
-  tripropellant engine.
+- **Eleven presets to start from**: Merlin 1D, F-1, J-2, RL10, Rutherford, a hydrolox expander, hydrolox staged
+  combustion, a hydrolox gas generator that exhausts into the nozzle, a pressure-fed hypergolic engine, a
+  tripropellant engine and a linear aerospike.
 - **Light it properly**: a cold-gas purge cloud, then start cartridge, helium spin start, TEA-TEB igniter (with its green
   flash) or a dead-head tank-pressure start.
   Valves have stroke times and the liquid in the lines has inertia, so slam a valve and you get water hammer.
@@ -59,6 +59,15 @@ the chamber, bell and plume burn green and white-hot for the first second, then 
     <td align="center"><img src="docs/images/engine-hydrolox-expander.jpg" alt="Hydrolox expander in vacuum"><br><sub>Hydrolox expander, big vacuum bell</sub></td>
   </tr>
 </table>
+
+### The aerospike
+
+A linear aerospike (as on the X-33's XRS-2200): two slot chambers either side of a central spike, with the exhaust expanding
+against the spike's ramp and only the open air for an outer wall, so the nozzle adjusts to the altitude. It is a pressure-fed
+hypergolic engine, so it needs no pumps or igniter. Below is the raw simulation of it at sea level, 8 km and 25 km: a narrow
+column off the spike at sea level, and a widening, billowing jet at altitude.
+
+<p align="center"><img src="docs/images/aerospike-altitudes.jpg" width="900" alt="The aerospike firing at sea level, 8 km and 25 km"></p>
 
 ### In the game
 
