@@ -1608,6 +1608,28 @@ impl World {
         Some(format!("burning {:.2} kg/s fuel + {:.2} kg/s oxidiser, O/F {:.2}\nhot gas {:.0} K out of the open face", mf, mo, mo / mf.max(1e-6), t_flame(&pr, mo / mf.max(1e-6))))
     }
 
+    /// The mixture ratio (oxidiser / fuel by mass) of the burning gas at a gas cell: a gas generator's own, if the cell is in or
+    /// near its cloud (within 40 cells of where it burns into, and nearer to it than to the main chamber's injectors), otherwise
+    /// the main chamber's (what the injectors are putting in). None while nothing is burning there.
+    pub fn gas_of(&self, cell: usize) -> Option<(f32, &'static str)> {
+        let (x, y) = ((cell % W) as f32, (cell / W) as f32);
+        let near = |j: usize| ((j % W) as f32 - x).hypot((j / W) as f32 - y);
+        let d_inj = self.nets.iter().flat_map(|n| n.injectors.iter()).map(|&(_, g)| near(g)).fold(f32::MAX, f32::min);
+        let mut best: Option<(f32, usize)> = None;
+        for (g, faces) in self.gg_faces.iter().enumerate() {
+            let d = faces.iter().map(|&(_, o)| near(o)).fold(f32::MAX, f32::min);
+            if d < 40.0 && d < d_inj && best.map_or(true, |b| d < b.0) {
+                best = Some((d, g));
+            }
+        }
+        if let Some((_, g)) = best {
+            let (fi, oi, _, _) = *self.gg.get(g)?;
+            let (mf, mo) = (self.nets[fi].gg_draw, self.nets[oi].gg_draw);
+            return (mf + mo > 1e-3).then(|| (mo / mf.max(1e-6), "gas generator"));
+        }
+        (self.ignited && self.g.of > 0.0).then(|| (self.g.of, "main chamber"))
+    }
+
     /// Where a valve sends its propellant: the main chamber (the injectors), a gas generator, or both (cached by rebuild_nets).
     pub fn valve_dest(&self, k: usize) -> Option<&'static str> {
         match self.valve_dests.get(k).copied().unwrap_or(0) {

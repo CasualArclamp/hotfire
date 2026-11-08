@@ -1711,7 +1711,8 @@ impl App {
             let pr = gas_p(s, p.gamma);
             let temp = pr / (rho * p.rgas);
             let mach = sp / (p.gamma * p.rgas * temp.max(1.0)).sqrt();
-            format!("({cx},{cy}) gas\nP {:.2} bar   T {:.0} K\nv {:.0} m/s   M {:.2}   rho {:.3}", pr / 1e5, temp, sp, mach, rho)
+            let of = if temp > 900.0 { self.world.gas_of(i).map(|(r, who)| format!("\nO/F {r:.2} ({who})")).unwrap_or_default() } else { String::new() };
+            format!("({cx},{cy}) gas\nP {:.2} bar   T {:.0} K\nv {:.0} m/s   M {:.2}   rho {:.3}{of}", pr / 1e5, temp, sp, mach, rho)
         } else if (t == c::TANK_F || t == c::TANK_O) && self.world.net_of[i] != world::NO_NET {
             let n = &self.world.nets[self.world.net_of[i] as usize];
             format!(

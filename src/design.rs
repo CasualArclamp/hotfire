@@ -678,6 +678,31 @@ mod tests {
     }
 
     #[test]
+    fn gas_cloud_reports_its_mixture_ratio() {
+        // a gas generator's cloud reports the generator's O/F, the chamber's the engine's
+        let mut w = World::new();
+        w.load_preset(6);
+        w.start_sequence();
+        for _ in 0..900 {
+            w.update(&Readback::default(), 1.0 / 60.0);
+        }
+        // (no GPU here: set the flows the simulation would give)
+        let (fi, oi, _, _) = w.gg[0];
+        w.nets[fi].gg_draw = 2.0;
+        w.nets[oi].gg_draw = 3.0;
+        w.ignited = true;
+        w.g.of = 2.3;
+        let gg_cell = w.gg_faces[0][0].1;
+        let (r, who) = w.gas_of(gg_cell).expect("the generator is burning");
+        assert_eq!(who, "gas generator");
+        assert!((r - 1.5).abs() < 1e-4, "{r}");
+        let inj = w.nets.iter().flat_map(|n| n.injectors.iter()).next().unwrap().1;
+        let (r2, who2) = w.gas_of(inj).expect("the chamber is burning");
+        assert_eq!(who2, "main chamber");
+        assert!((r2 - w.g.of).abs() < 1e-4);
+    }
+
+    #[test]
     fn valves_say_where_they_go() {
         // the gas-generator aerospike: two main valves feed the chamber, two feed the generator
         let mut w = World::new();
