@@ -10,6 +10,11 @@ use crate::prefabs::{stub, Board};
 use crate::world::{c, t_flame, turbine_eff, turbine_opt, Settings, PHI_BEP, PROPS, PSI, U_TIP_MAX};
 use std::f32::consts::PI;
 
+/// The gas pressure at the fuel and the oxidiser injectors, against the chamber's average (measured on the standard chambers: the
+/// fuel enters down the side, the oxidiser at the head end where the gas stagnates).
+pub const LOCAL_F: f32 = 0.9;
+pub const LOCAL_O: f32 = 1.25;
+
 /// Design tip speed: well under the rated limit, so the governor has room above it.
 const U_DESIGN: f32 = 0.62 * U_TIP_MAX;
 /// Turbine drive gas as the simulation delivers it: spouting velocity against sqrt(R T) of the gas.
@@ -187,10 +192,10 @@ pub fn size(i: &PhInput) -> PhSize {
     let mdot = i.pc * a_t / cstar;
     let mf = mdot / (1.0 + p.of_opt);
     let mo = mdot - mf;
-    // pump discharge: chamber pressure plus a stiff 25% across the injectors, and for the fuel another
+    // pump discharge: the gas pressure at the injectors plus a stiff 25% across them, and for the fuel another
     // 10% through the cooling jacket and lines
-    let p_dis_f = 1.35 * i.pc;
-    let p_dis_o = 1.3 * i.pc;
+    let p_dis_f = (LOCAL_F + 0.35) * i.pc;
+    let p_dis_o = (LOCAL_O + 0.30) * i.pc;
     let h_f = (p_dis_f - i.tank_p_f).max(0.2 * i.pc);
     let h_o = (p_dis_o - i.tank_p_o).max(0.2 * i.pc);
     let mut notes = vec![];

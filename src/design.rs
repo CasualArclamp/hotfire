@@ -225,9 +225,74 @@ impl World {
         }
         // injectors take a stiff 25% pressure drop; the turbopumps then settle at whatever speed gives that head
         let dp = 0.25 * pc;
-        let (dp_f, dp_o) = (dp, dp);
         // the governor holds pump discharge at the design feed pressure, not the hardware limit
         self.st.feed_p_max = 1.05 * (pc + dp);
+        // The pumps do not make the same pressure on both sides: each shaft turns until its highest discharge reaches the
+        // governor's limit, and the other pump then makes whatever its own curve gives at that speed. So the pressure left over
+        // for each set of injectors, at the design flows, is read off the real pump curves, and the orifices are sized for that
+        // (not for a flat 25%), which is what makes the sized pumps deliver the design mixture ratio.
+        // (The gas pressure the injectors push against is not the chamber's average: at the oxidiser injectors, at the head end,
+        // it reads higher and at the fuel injectors, down the side, lower; measured on the standard chambers. The pumps the
+        // powerhead sizes make head for that, and the governor is set for it as far as the pumps can reach.)
+        use crate::powerhead::{LOCAL_F, LOCAL_O};
+        {
+            let mut need = 0.0f32;
+            let mut cap = f32::MAX;
+            for (prop, rho, tank, loc, extra) in [(0u8, p.rho_f, st.tank_p_f, LOCAL_F, 0.35), (1, p.rho_o, st.tank_p_o, LOCAL_O, 0.30)] {
+                let heads: Vec<f32> = self
+                    .shafts
+                    .iter()
+                    .flat_map(|s| s.pumps.iter().map(move |q| (s.omega_rated, q)))
+                    .filter(|(_, q)| q.prop == prop)
+                    .map(|(w, q)| q.head_at(w, q.bep_flow(w, rho), rho))
+                    .collect();
+                if !heads.is_empty() {
+                    need = need.max((loc + extra) * pc);
+                    cap = cap.min(tank + heads.iter().sum::<f32>());
+                }
+            }
+            if need > 0.0 {
+                self.st.feed_p_max = self.st.feed_p_max.max((1.05 * need).min(0.97 * cap));
+            }
+        }
+        let (mut dp_f, mut dp_o) = (dp, dp);
+        let (tank_f, tank_o) = (st.tank_p_f, st.tank_p_o);
+        for sh in &self.shafts {
+            if sh.pumps.is_empty() || sh.omega_rated <= 0.0 {
+                continue;
+            }
+            let head_of = |w: f32| {
+                let mut h = [0.0f32; 2];
+                let mut has = [false; 2];
+                for q in &sh.pumps {
+                    let (m, rho) = if q.prop == 0 { (mf, p.rho_f) } else { (mo, p.rho_o) };
+                    h[q.prop as usize & 1] += q.head_at(w, m, rho).max(0.0);
+                    has[q.prop as usize & 1] = true;
+                }
+                let d = [if has[0] { tank_f + h[0] } else { 0.0 }, if has[1] { tank_o + h[1] } else { 0.0 }];
+                (d, d[0].max(d[1]))
+            };
+            let (mut lo, mut hi) = (0.05 * sh.omega_rated, 1.2 * sh.omega_rated);
+            if head_of(hi).1 < self.st.feed_p_max {
+                lo = hi; // it cannot get there (reported above): at the top speed
+            } else {
+                for _ in 0..40 {
+                    let mid = 0.5 * (lo + hi);
+                    if head_of(mid).1 < self.st.feed_p_max {
+                        lo = mid;
+                    } else {
+                        hi = mid;
+                    }
+                }
+            }
+            let (d, _) = head_of(lo);
+            if sh.pumps.iter().any(|q| q.prop == 0) {
+                dp_f = (d[0] - LOCAL_F * pc).max(0.1 * pc);
+            }
+            if sh.pumps.iter().any(|q| q.prop == 1) {
+                dp_o = (d[1] - LOCAL_O * pc).max(0.1 * pc);
+            }
+        }
         for (prop, rho, tank) in [(0u8, p.rho_f, st.tank_p_f), (1, p.rho_o, st.tank_p_o)] {
             let pumped = self.shafts.iter().any(|s| s.pumps.iter().any(|q| q.prop == prop));
             if !pumped {

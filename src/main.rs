@@ -1408,7 +1408,9 @@ impl App {
                     "needs a throttle valve in both lines".to_string()
                 } else {
                     let side = if target < 0.97 * pr.of_stoich { "fuel-rich" } else if target > 1.03 * pr.of_stoich { "oxidiser-rich: hot, eats walls" } else { "stoichiometric" };
-                    format!("{side}. Middle = stoichiometric {:.2}, best Isp about {:.1}. Valves: fuel {:.0}%, oxidiser {:.0}%", pr.of_stoich, pr.of_opt, w.thr_valves[0] * 100.0, w.thr_valves[1] * 100.0)
+                    let limit = if w.mix_k < 0.1 || w.mix_k > 10.0 { "
+Out of range: a valve is closed right down and the pumps still cannot deliver this ratio (resize the pumps or injectors)" } else { "" };
+                    format!("{side}. Middle = stoichiometric {:.2}, best Isp about {:.1}. Valves: fuel {:.0}%, oxidiser {:.0}%{limit}", pr.of_stoich, pr.of_opt, w.thr_valves[0] * 100.0, w.thr_valves[1] * 100.0)
                 };
                 ui.label(egui::RichText::new(note).small().color(if n_f && n_o { dim } else { warn }));
             }
@@ -3544,8 +3546,8 @@ fn selftest(seconds: f32, shot: Option<String>, args: &[String]) {
             }
             let nan = rb.state.iter().filter(|s| !s[0].is_finite() || !s[3].is_finite()).count();
             println!(
-                "t={:.1}s fr={} ign={} Tcool={:.0} Pc={:.1}bar thrust={:.3}MN mdot={:.1}+{:.1} OF={:.2} rpm={:.0} he={:.0}% gg={:.1}MW/{:.0}K pumps={:.1}MW Twall={:.0}K Tflame={:.0} Isp={:.0} alt={:.1}km amb={:.3}bar nan={} ev={:?}",
-                el, frame, g.ignited as u8, g.t_cool, g.chamber_p / 1e5, g.thrust / 1e6, g.mdot_f, g.mdot_o, g.of, g.rpm, g.he_frac * 100.0, g.p_gg / 1e6, g.t_gg, g.p_pump / 1e6, g.max_wall_t, g.t_flame, g.isp, if w.alt_on { w.altitude } else { 0.0 }, w.st.amb_p / 1e5, nan, w.events.last()
+                "t={:.1}s fr={} ign={} Tcool={:.0} Pc={:.1}bar thrust={:.3}MN mdot={:.1}+{:.1} OF={:.2} rpm={:.0} he={:.0}% gg={:.1}MW/{:.0}K pumps={:.1}MW Twall={:.0}K Tflame={:.0} Isp={:.0} alt={:.1}km amb={:.3}bar nan={} mix={:.2}/{:.2} valves={:.2}/{:.2} ev={:?}",
+                el, frame, g.ignited as u8, g.t_cool, g.chamber_p / 1e5, g.thrust / 1e6, g.mdot_f, g.mdot_o, g.of, g.rpm, g.he_frac * 100.0, g.p_gg / 1e6, g.t_gg, g.p_pump / 1e6, g.max_wall_t, g.t_flame, g.isp, if w.alt_on { w.altitude } else { 0.0 }, w.st.amb_p / 1e5, nan, g.of, w.st.mix_target, w.thr_valves[0], w.thr_valves[1], w.events.last()
             );
         }
     }

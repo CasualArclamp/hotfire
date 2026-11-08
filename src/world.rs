@@ -1026,6 +1026,8 @@ pub struct World {
     pub frame_steps: u32,   // gas steps the GPU will actually run this frame (0: the setting's worth)
     pub throttle_pos: f32,  // where the throttle valves actually are: they travel to the setting at the valve stroke speed
     pub mix_k: f32,         // mixture control: above 1 the fuel throttle valves close down, below 1 the oxidiser ones
+    mix_lr: f32,            // mixture control: the last measured ln(O/F) (NaN: not measuring), and how fast it is moving
+    mix_rate: f32,
     pub teateb_flash: f32,   // a TEA-TEB injection is burning: 1 at the start, dying away over a second or two
     pub teateb_at: usize,    // ... in this gas cell
     pub tea_age: f32,        // seconds since the TEA-TEB first reached an injector (the exhaust burns green for the first second or so)
@@ -1132,6 +1134,8 @@ impl World {
             frame_steps: 0,
             throttle_pos: 1.0,
             mix_k: 1.0,
+            mix_lr: f32::NAN,
+            mix_rate: 0.0,
             soft_t: 0.0,
             teateb_flash: 0.0,
             teateb_at: 0,
@@ -3907,15 +3911,31 @@ impl World {
         let thr_rate = dtl / st.valve_stroke.max(0.005);
         let thr_target = st.throttle.clamp(0.0, 1.0) * self.shut_thr;
         self.throttle_pos += (thr_target - self.throttle_pos).clamp(-thr_rate, thr_rate);
-        // mixture-ratio control (like the J-2's propellant utilisation valve): while the engine burns, trim
-        // the throttle valves to hold the target O/F. More oxidiser: close the fuel valve down a little; less:
-        // the oxidiser valve. It reacts over about half a second, following the measured mixture
+        // mixture-ratio control (like the J-2's propellant utilisation valve): while the engine burns, trim the throttle
+        // valves to hold the target O/F. A throttle valve passes a flow in proportion to its opening, so the ratio of the two
+        // flows goes in proportion to mix_k and the right trim is the target over the measured ratio. The measured ratio
+        // (the liquid flows into the injectors) trails the valves by the line inertia and swings hard while the pumps spool up,
+        // so the loop aims at where the ratio is heading (a lead on its rate of change) and takes a bigger step when the error is
+        // big, which settles in about a second without overshooting. Either side can close right down (to 8%) to reach the
+        // ratio; at that limit the pumps cannot deliver it and the panel says so
         let both_metered = self.nets.iter().any(|n| n.throttle && n.prop == 0) && self.nets.iter().any(|n| n.throttle && n.prop == 1);
         if st.mix_target > 0.0 && both_metered && self.ignited && self.g.of > 0.05 {
-            let err = (st.mix_target / self.g.of).ln().clamp(-0.5, 0.5);
-            self.mix_k = (self.mix_k * (err * dtl * 1.5).exp()).clamp(0.3, 3.0);
-        } else if st.mix_target <= 0.0 {
-            self.mix_k += (1.0 - self.mix_k) * (dtl * 2.0).min(1.0);
+            let lr = self.g.of.ln();
+            if self.mix_lr.is_finite() {
+                let raw = (lr - self.mix_lr) / dtl.max(1e-4);
+                self.mix_rate += (raw - self.mix_rate) * (1.0 - (-dtl / 0.12).exp());
+            }
+            self.mix_lr = lr;
+            let ahead = lr + (0.25 * self.mix_rate).clamp(-0.4, 0.4);
+            let err = (st.mix_target.ln() - ahead).clamp(-0.8, 0.8);
+            let gain = 2.5 + 3.0 * err.abs(); // 1/s
+            self.mix_k = (self.mix_k * (err * dtl * gain).exp()).clamp(0.08, 12.0);
+        } else {
+            self.mix_lr = f32::NAN;
+            self.mix_rate = 0.0;
+            if st.mix_target <= 0.0 {
+                self.mix_k += (1.0 - self.mix_k) * (dtl * 2.0).min(1.0);
+            }
         }
         let thr = self.throttle_pos;
         let thr_of = [
