@@ -6,7 +6,8 @@ struct P {
     dx: f32, dt: f32, depth: f32, gamma: f32,
     rgas: f32, accel: f32, h0: f32, amb_rho: f32,
     amb_t: f32, rho_min: f32, axi: u32, axis_x: f32,
-    amb_k: f32, amb_v: f32, _b: f32, _c: f32,
+    amb_k: f32, amb_v: f32, stab_y: f32, stab_k: f32,
+    stab_r: f32, _d: f32, _e: f32, _f: f32,
 }
 struct Src { cell: u32, drho: f32, dmx: f32, dmy: f32, de: f32, p0: f32, p1: f32, p2: f32 }
 
@@ -266,6 +267,16 @@ fn gas_update(x: i32, y: i32, i: u32) {
         N.z = r0 * vv;
         let amb = vec4<f32>(ra, ra * uu, ra * vv, ra * p.rgas / (p.gamma - 1.0) * p.amb_t + 0.5 * ra * (uu * uu + vv * vv));
         N = mix(N, amb, sponge);
+    }
+
+    // jet stabiliser: a planar jet flaps from side to side (the sinuous mode, which a round jet has far less of), swinging the
+    // whole exhaust about. Far enough below the nozzle, the sideways velocity of the fast gas moving down is damped, which
+    // kills that mode; the lost kinetic energy stays in the gas as heat, as with a viscosity.
+    if (p.stab_k > 0.0 && f32(y) > p.stab_y) {
+        let rs = max(N.x, p.rho_min);
+        let vs = N.z / rs;
+        let jet = smoothstep(250.0, 700.0, vs) * smoothstep(0.0, max(p.stab_r, 1.0), f32(y) - p.stab_y);
+        N.y = N.y * exp(-p.stab_k * dtk * jet);
     }
 
     // positivity / speed limits

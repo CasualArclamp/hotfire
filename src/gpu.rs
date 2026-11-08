@@ -29,7 +29,10 @@ pub struct SimParams {
     pub axis_x: f32,
     pub amb_k: f32, // quiet air anywhere relaxes to the ambient density at this fraction a base step (while the altitude changes)
     pub amb_v: f32, // the wind past the vehicle, m/s down the screen (flying up: air rushes down past the engine)
-    pub _pad: [f32; 2],
+    pub stab_y: f32, // jet stabiliser: the row below which the fast jet's sideways velocity is damped (0: off)
+    pub stab_k: f32, // ... at this rate, per second of simulated time
+    pub stab_r: f32, // ... fading in over this many rows below stab_y
+    pub _pad: [f32; 3],
 }
 
 impl SimParams {
@@ -54,7 +57,10 @@ impl SimParams {
             axis_x: W as f32 / 2.0,
             amb_k: 0.0,
             amb_v: 0.0,
-            _pad: [0.0; 2],
+            stab_y: 0.0,
+            stab_k: 0.0,
+            stab_r: 1.0,
+            _pad: [0.0; 3],
         }
     }
 }

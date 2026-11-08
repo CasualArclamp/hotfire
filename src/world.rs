@@ -44,6 +44,10 @@ pub const ANIM_BURN: usize = ANIM_VAP + 256; // the burner blocks: how many (up 
 pub const ANIM_AIR: usize = ANIM_BURN + 9; // the wind past the vehicle (m/s down the screen), ambient density against sea level
 pub const ANIM_PLUME: usize = ANIM_AIR + 3; // the stylised exhaust plume: on, exit x, exit y, half width, exit speed, Pe/Pa, Mach, flame temperature, intensity, throat y, purge cloud, green TEA-TEB exhaust glow, chamber top y, diamond style, how hard the engine is running (0..1), jet half width after any flow separation, separation severity (0..1), 1 for a round (axisymmetric) engine
 pub const ANIM_TEA: usize = ANIM_PLUME + 18; // the TEA-TEB flash (x, y, how bright), then 1 for each bottle that holds TEA-TEB
+/// How hard the jet stabiliser damps the sideways velocity of the fast exhaust far below the nozzle, per second of simulated
+/// time. A planar jet flaps from side to side; this keeps the near-nozzle shock structure and stills the swinging.
+pub const JET_STABILISER: f32 = 4000.0;
+
 /// Wall pressure over ambient below which the flow in an over-expanded bell separates (Summerfield criterion, about 0.35 to 0.4).
 pub const SEPARATION_P: f32 = 0.4;
 
@@ -1016,6 +1020,7 @@ pub struct World {
     pub teateb_at: usize,    // ... in this gas cell
     pub tea_age: f32,        // seconds since the TEA-TEB first reached an injector (the exhaust burns green for the first second or so)
     pub purge_vis: f32,      // the cold-gas purge cloud at the nozzle exit (0..1): rises while the start purge runs, thins away after it
+    pub stable_jet: bool,   // damp the exhaust's sideways swinging far below the nozzle (the jet stabiliser, see sim.wgsl)
     pub pc_ref: f32,        // the chamber pressure the engine has been running at lately (a slowly decaying peak), to find how far it is throttled
     pub fx_style: u32,      // which Mach-diamond style the plume shader draws (see PLUME_STYLES)
     pub fx_plume: bool,     // draw the exhaust as a plume shader (off: just the gas simulation's own picture)
@@ -1120,6 +1125,7 @@ impl World {
             teateb_at: 0,
             tea_age: 99.0,
             purge_vis: 0.0,
+            stable_jet: true,
             pc_ref: 0.0,
             fx_style: 6, // (the style matched to photographs: see PLUME_STYLES)
             fx_plume: true,
@@ -1563,6 +1569,12 @@ impl World {
         p.h0 *= self.wall_h_scale;
         p.amb_k = self.amb_k;
         p.amb_v = self.wind();
+        // the jet stabiliser starts one exit diameter below the nozzle exit
+        if self.plume[0] > 0.5 {
+            p.stab_y = self.plume[2] + 2.0 * self.plume[3];
+            p.stab_r = 10.0 * self.plume[3]; // fully on about six exit diameters down
+            p.stab_k = if self.stable_jet { JET_STABILISER } else { 0.0 };
+        }
         p
     }
 

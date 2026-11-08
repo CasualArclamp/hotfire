@@ -186,6 +186,10 @@ copy target\release\rocket_sandbox.exe hotfire\Hotfire.exe
   from the gas at the nozzle exit (speed, Mach number, pressure against the air's), the flame temperature, the
   ambient pressure and the wind: it bursts wide in thin air, pinches in low down, has shock diamonds and a Mach disk,
   streams fast, and is squashed by air rushing up into the nozzle. The gas simulation underneath is unchanged.
+  A planar (2D) jet flaps from side to side, so the raw exhaust swings about slowly and lumps of smoke drift off it. **Stable
+  exhaust** (View panel, on by default) damps the sideways swinging of the fast gas far below the nozzle, fading in from one
+  exit diameter out to about six, so the shock cells near the engine are left alone and the jet holds still. Untick it for
+  the solver exactly as it is.
   **Turn it off for the full simulation**: the gas exactly as the solver has it, with no plume shader, no purge cloud and no
   recolouring in the bell (a TEA-TEB start still burns green, and cold cryogenic vapour still turns to mist, since both
   come from the simulation). On a fast GPU, raise *gas steps per 1/60 s* (Simulation) so the far plume fills in.

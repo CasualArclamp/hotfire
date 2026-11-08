@@ -776,6 +776,7 @@ impl App {
                 ui.checkbox(&mut self.show_heat, "Glow hot walls");
                 ui.checkbox(&mut self.show_engine, "Engine panel (right)");
                 ui.checkbox(&mut self.world.st.show_particles, "Flow particles");
+                ui.checkbox(&mut self.world.stable_jet, "Stable exhaust").on_hover_text("A planar (2D) jet flaps from side to side, so the raw exhaust swings about slowly. This damps the sideways swinging of the fast gas far below the nozzle: the shock cells close to the engine are left alone. Off: the simulation exactly as the solver has it.");
                 ui.checkbox(&mut self.world.fx_plume, "Stylised exhaust plume").on_hover_text("Draw the main nozzle's exhaust as a plume shader driven by the exit speed, Mach number, flame temperature, air pressure and wind, and the start purge as a white cloud (the gas simulation underneath is unchanged). Off: the full simulation, the gas exactly as the solver has it: no plume shader, no purge cloud, no recolouring in the bell. A far plume needs a lot of gas steps to look right, so on a fast GPU raise \"gas steps per 1/60 s\" (Simulation) and the plume fills in.");
                 if !self.world.fx_plume {
                     ui.label(egui::RichText::new("Full simulation: the raw gas, no plume shader").small().weak());
@@ -2864,6 +2865,9 @@ fn selftest(seconds: f32, shot: Option<String>, args: &[String]) {
     if let Some(k) = arg("--plumestyle") {
         w.fx_style = k as u32;
     }
+    if args.iter().any(|a| a == "--nostab") {
+        w.stable_jet = false;
+    }
     if args.iter().any(|a| a == "--fullsim") {
         w.fx_plume = false; // the gas simulation as it is, no stylised plume
     }
@@ -3135,6 +3139,7 @@ fn selftest(seconds: f32, shot: Option<String>, args: &[String]) {
     let mut first = true;
     let mut last_print = 0.0;
     let (mut t_upd, mut t_gpu, mut t_rb) = (0.0f32, 0.0f32, 0.0f32);
+    let mut wander: Vec<[f32; 3]> = vec![]; // --wander: the jet's lateral position at three depths, every 10 frames
     while t0.elapsed().as_secs_f32() < seconds {
         let manual = args.iter().any(|a| a == "--manual");
         let burn_at = arg("--burnat").map_or(3, |t| (t * 60.0) as u32);
@@ -3460,6 +3465,32 @@ fn selftest(seconds: f32, shot: Option<String>, args: &[String]) {
         }
         t_rb += tq.elapsed().as_secs_f32();
         frame += 1;
+        // --wander: where the jet is sideways, as the momentum-weighted mean x of the gas moving down fast, at 1.5, 4 and 8 exit
+        // diameters below the exit (how far the exhaust swings about in the simulation)
+        if args.iter().any(|a| a == "--wander") && frame % 10 == 0 && frame > 480 && rb.valid && w.plume[0] > 0.5 {
+            let (ye, de) = (w.plume[2] as usize, 2.0 * w.plume[3]);
+            let mut row = [f32::NAN; 3];
+            for (k, mult) in [1.5f32, 4.0, 8.0].iter().enumerate() {
+                let y = ye + (mult * de) as usize;
+                if y + 1 >= H {
+                    continue;
+                }
+                let (mut sx, mut sm) = (0.0f64, 0.0f64);
+                for x in 0..W {
+                    let s = rb.state[World::idx(x, y)];
+                    let vy = s[2] / s[0].max(1e-6);
+                    if vy > 150.0 {
+                        let m = (s[0] * vy) as f64;
+                        sx += x as f64 * m;
+                        sm += m;
+                    }
+                }
+                if sm > 0.0 {
+                    row[k] = (sx / sm) as f32;
+                }
+            }
+            wander.push(row);
+        }
         // --gif PREFIX [--gifstart F] [--gifevery N] [--gifn COUNT] [--gifmode M]: a flame-view PNG every N frames from frame F
         // (for the README's animation; ffmpeg turns the numbered files into a GIF). Stops once COUNT are saved.
         if let Some(gp) = args.iter().position(|a| a == "--gif").and_then(|p| args.get(p + 1)) {
@@ -3579,6 +3610,17 @@ fn selftest(seconds: f32, shot: Option<String>, args: &[String]) {
         for (x, y) in [(212 + ox, 250 + oy), (215 + ox, 250 + oy), (217 + ox, 250 + oy), (230 + ox, 250 + oy)] {
             let s = rb.state[World::idx(x, y)];
             println!("cell ({x},{y}) type {} rho {:.4} T {:.0} K P {:.2} bar", w.cells[World::idx(x, y)], s[0], gas_p(s, pr.gamma) / (s[0].max(1e-6) * pr.rgas), gas_p(s, pr.gamma) / 1e5);
+        }
+    }
+    if args.iter().any(|a| a == "--wander") {
+        for (k, name) in ["1.5 D", "4 D", "8 D"].iter().enumerate() {
+            let v: Vec<f32> = wander.iter().map(|r| r[k]).filter(|x| x.is_finite()).collect();
+            if v.len() > 3 {
+                let mean = v.iter().sum::<f32>() / v.len() as f32;
+                let sd = (v.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / v.len() as f32).sqrt();
+                let (lo, hi) = (v.iter().cloned().fold(f32::MAX, f32::min), v.iter().cloned().fold(f32::MIN, f32::max));
+                println!("wander at {name} below the exit: mean x {mean:.1}, std dev {sd:.1} cells, range {lo:.1} .. {hi:.1} ({} samples)", v.len());
+            }
         }
     }
     if args.iter().any(|a| a == "--plumeinfo") {
