@@ -1366,21 +1366,27 @@ impl World {
             self.rect(127, y_cap - 1, 128, y_cap + 1, c::PIPE);
             self.rect(127, y_cap - 1, 128, y_cap - 1, c::THROTTLE);
         } else if e.gg {
-            // Gas-generator turbopumps down the middle of the spike, one shaft: oxidiser pump on top, the turbine, the fuel pump
-            // below. The generator is bolted to the turbine's right face, its exhaust leaves the left face into a duct that runs
-            // down the left, jogs to the axis under the fuel pump, and opens out of the spike's truncated base. Both pump outlets
-            // that cross a slot chamber use the back layer, and so do both feeds in.
+            // Gas-generator turbopumps down the middle of the spike, one shaft: oxidiser pump on top, a shaft cell, the fuel pump,
+            // another, and the turbine at the bottom. The turbine's exhaust leaves its bottom face straight down the axis in a duct
+            // that narrows with the spike and opens out of the truncated base, the shortest, straightest way out (little back
+            // pressure on the wheel). The generator is bolted to the turbine's right face. A pipe touching any face of a pump joins
+            // its network, so the pumps need no open end; the shaft cells keep the two pumps from merging into one block.
             let xc = 128;
             let (d_o, l_o, d_f, l_f, d_t, l_t) = (6, 4, 6, 4, 10, 14);
             let y_o = y_cap + 8;
-            let (y_t, y_f) = (y_o + l_o, y_o + l_o + l_t);
+            let y_s1 = y_o + l_o; // shaft cell row between the pumps
+            let y_f = y_s1 + 1;
+            let y_s2 = y_f + l_f; // shaft cell row between the fuel pump and the turbine
+            let y_t = y_s2 + 1;
             let (ox0, ox1) = (xc - d_o / 2, xc - d_o / 2 + d_o - 1);
             let (tx0, tx1) = (xc - d_t / 2, xc - d_t / 2 + d_t - 1);
             let (pf0, pf1) = (xc - d_f / 2, xc - d_f / 2 + d_f - 1);
-            self.rect(ox0, y_o, ox1, y_t - 1, c::PUMP);
-            self.rect(tx0, y_t, tx1, y_f - 1, c::TURBINE);
+            self.rect(ox0, y_o, ox1, y_s1 - 1, c::PUMP);
+            self.rect(xc - 1, y_s1, xc, y_s1, c::SHAFT);
             self.rect(pf0, y_f, pf1, y_f + l_f - 1, c::PUMP);
-            let (cy0, cy1) = (y_t, y_f - 1);
+            self.rect(xc - 1, y_s2, xc, y_s2, c::SHAFT);
+            self.rect(tx0, y_t, tx1, y_t + l_t - 1, c::TURBINE);
+            let (cy0, cy1) = (y_t, y_t + l_t - 1);
             // the generator: a head on the right, a cavity, and a funnel narrowing to a 4-row opening onto the turbine
             let hx = 145;
             let (gc0, gc1) = (137, 144);
@@ -1390,24 +1396,24 @@ impl World {
                 self.rect(gc0 - 1 - k, cy0 + inset, gc0 - 1 - k, cy1 - inset, c::EMPTY);
             }
             self.rect(hx, cy0, hx + 1, cy1, c::GG);
-            // generator feeds: oxidiser from the oxidiser pump's right side, over and down onto the head's top, through a valve;
-            // fuel from the fuel pump's right side, along and up through a valve onto the head's bottom
+            // generator feeds. Oxidiser: out of the oxidiser pump's right side, along, and down a one-cell pipe at the far right of
+            // the spike past the head to a row under it, through a valve. Fuel: out of the fuel pump's right side, along to the
+            // head, and down through a valve onto its top. (The two never touch: the oxidiser pipe stays a cell clear of the head.)
             let yo_m = y_o + l_o / 2 - 1;
-            self.rect(ox1 + 1, yo_m, hx + 1, yo_m + 1, c::PIPE);
+            self.rect(ox1 + 1, yo_m, 148, yo_m + 1, c::PIPE);
             self.rect(hx - 6, yo_m, hx - 5, yo_m + 1, c::VALVE_X);
-            self.rect(hx, yo_m, hx + 1, cy0 - 1, c::PIPE);
-            let yf_m = y_f + l_f / 2 - 1;
-            let yf_g = y_f + 2; // the generator's fuel row, a little below the main outlet's
+            self.rect(148, yo_m + 2, 148, cy1 + 1, c::PIPE);
+            self.rect(hx, cy1 + 1, 148, cy1 + 1, c::PIPE);
+            let yf_g = y_f + 1; // the generator's fuel row
             self.rect(pf1 + 1, yf_g, hx + 1, yf_g + 1, c::PIPE);
-            self.rect(hx, cy1 + 1, hx + 1, cy1 + 1, c::PIPE);
-            self.rect(hx, cy1 + 2, hx + 1, cy1 + 2, c::VALVE_X);
-            // the exhaust: a window on the turbine's left face, a channel down the left, a jog to the axis under the fuel pump, and
-            // a channel down the axis out of the base
-            let y_fi = y_f + l_f; // fuel inlet rows y_fi, y_fi + 1
-            self.rect(112, y_t + 2, tx0 - 1, y_t + 9, c::EMPTY);
-            self.rect(112, y_t + 2, 116, y_fi + 6, c::EMPTY);
-            self.rect(112, y_fi + 3, xc + 2, y_fi + 6, c::EMPTY);
-            self.rect(xc - 3, y_fi + 3, xc + 2, y_end as i32, c::EMPTY);
+            self.rect(hx, yf_g + 2, hx + 1, yf_g + 2, c::VALVE_X);
+            self.rect(hx, yf_g + 3, hx + 1, cy0 - 1, c::PIPE);
+            // the exhaust: straight down the axis from the turbine's bottom face, as wide as the spike allows (half-width 5, less
+            // near the base where the spike is thin) and out of the base
+            for y in (y_t + l_t)..=(y_end as i32) {
+                let hd = (spike(y as f32 + 0.5) - liner - 2.0).clamp(3.0, 5.0) as i32;
+                self.rect(xc - hd, y, xc + hd - 1, y, c::EMPTY);
+            }
             // oxidiser main outlet: out of the pump's left side and up to the line over the top of the spike, through the main valve
             // and the throttle (downstream of the pump, as on the Merlin, so the pump and the generator's branch are connected to
             // the tank from the start and the start sequence can open the generator's valve)
@@ -1420,15 +1426,17 @@ impl World {
             self.rect(127, ox_y.1 + 6, 128, ox_y.1 + 7, c::JOINT);
             self.rect(127, y_o - 2, 128, y_o - 1, c::JOINT);
             back.push((127, ox_y.1 + 6, 128, y_o - 1));
-            // fuel inlet: straight from the right of the tank's bottom, a joint, behind the stack down the right and along to a joint
-            // on the fuel pump's bottom face
+            // fuel inlet: straight from the right of the tank's bottom, a joint, behind the stack down the right, and a joint against
+            // the fuel pump's right face just above the generator's fuel row
+            let y_fi = y_f - 1; // inlet joint rows y_fi, y_fi + 1
             self.rect(135, fuel_y.1 + 1, 136, fuel_y.1 + 5, c::PIPE);
             self.rect(135, fuel_y.1 + 6, 136, fuel_y.1 + 7, c::JOINT);
-            self.rect(127, y_fi, 128, y_fi + 1, c::JOINT);
+            self.rect(pf1 + 1, y_fi, pf1 + 2, y_fi + 1, c::JOINT);
             back.push((135, fuel_y.1 + 6, 136, y_fi + 1));
-            back.push((128, y_fi, 136, y_fi + 1));
+            back.push((pf1 + 1, y_fi, 136, y_fi + 1));
             // fuel main outlet: out of the pump's left side, through the main valve and the throttle, a joint, then behind the engine
             // to a joint in the left side pipe
+            let yf_m = y_f + l_f / 2 - 1;
             self.rect(118, yf_m, pf0 - 1, yf_m + 1, c::PIPE);
             self.rect(121, yf_m, 122, yf_m + 1, c::VALVE_X);
             self.rect(120, yf_m, 120, yf_m + 1, c::THROTTLE);

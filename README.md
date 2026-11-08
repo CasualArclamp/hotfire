@@ -70,9 +70,9 @@ All three are MMH/N2O4 hypergolic, so none needs an igniter.
 - **Aerospike**: pressure-fed, a helium-pressurised stage with no pumps.
 - **Aerospike, pump-fed**: electric pumps inside the spike (the engine's tail): an oxidiser pump, a motor and a fuel pump on one
   shaft down the middle, a battery pack beside the motor, low-pressure tanks and a higher chamber pressure.
-- **Aerospike, gas generator**: a turbopump inside the spike driven by a gas generator, with the generator's exhaust ducted down
-  through the spike and out of its truncated base, filling the wake behind it (base bleed, as on the XRS-2200). It starts on tank
-  head.
+- **Aerospike, gas generator**: a turbopump inside the spike driven by a gas generator. The turbine is at the bottom of the shaft,
+  so its exhaust goes straight down a duct through the middle of the spike (little back pressure on the wheel) and out of the
+  truncated base, filling the wake behind it (base bleed, as on the XRS-2200). It starts on tank head.
 
 Below is the pressure-fed one in the raw simulation at sea level, 8 km and 25 km: a narrow column off the spike at sea level, and
 a widening, billowing jet at altitude. The second picture is the gas-generator version, whole and with a close-up of the base,
