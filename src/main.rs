@@ -1594,12 +1594,21 @@ impl App {
             // heat
             egui::CollapsingHeader::new(egui::RichText::new("Heat").strong()).default_open(true).show(ui, |ui| {
                 ui.label(format!("flame {:.0} K", g.t_flame));
-                let wall_frac = g.max_wall_t / 1700.0;
+                // the bar is how close the wall that is nearest its own melting point is to it (ceramic and niobium take far more
+                // than steel or copper, so a fixed scale would call a safe ceramic wall nearly molten)
+                let (hot_t, melt) = if g.hot_melt > 0.0 { (g.hot_t, g.hot_melt) } else { (g.max_wall_t, 1700.0) };
+                let wall_frac = hot_t / melt;
+                let mat = match g.hot_mat {
+                    world::c::COPPER => "copper",
+                    world::c::CERAMIC => "ceramic",
+                    world::c::NIOBIUM => "niobium",
+                    _ => "steel",
+                };
                 ui.horizontal(|ui| {
                     ui.add_sized([70.0, 14.0], egui::Label::new("hottest wall"));
                     ui.add(
                         egui::ProgressBar::new(wall_frac.clamp(0.0, 1.0))
-                            .text(format!("{:.0} K", g.max_wall_t))
+                            .text(if g.hot_melt > 0.0 { format!("{:.0} K {mat}, melts {:.0}", hot_t, melt) } else { format!("{:.0} K", hot_t) })
                             .fill(if wall_frac > 0.85 { egui::Color32::from_rgb(190, 70, 40) } else { egui::Color32::from_rgb(140, 90, 50) }),
                     );
                 });

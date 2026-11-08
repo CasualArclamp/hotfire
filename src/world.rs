@@ -922,6 +922,10 @@ pub struct Gauges {
     pub of: f32,
     pub t_flame: f32,
     pub max_wall_t: f32,
+    /// the wall cell closest to its own melting point: its temperature, the material and that material's melting point
+    pub hot_t: f32,
+    pub hot_mat: u8,
+    pub hot_melt: f32,
     pub q_regen: f32,
     pub p_turb: f32,
     pub p_pump: f32,
@@ -4164,6 +4168,7 @@ impl World {
         if rb.valid {
             let mut thrust = 0.0;
             let mut maxt = 0.0f32;
+            let (mut hot_frac, mut hot_t, mut hot_mat) = (0.0f32, 0.0f32, 0u8);
             let mut broken: Vec<(usize, &'static str)> = vec![];
             for y in 1..H - 1 {
                 for x in 1..W - 1 {
@@ -4178,6 +4183,10 @@ impl World {
                     let tw = rb.state[i][3];
                     if !c::is_line(t) {
                         maxt = maxt.max(tw);
+                        let fr = tw / c::t_melt(t);
+                        if fr > hot_frac {
+                            (hot_frac, hot_t, hot_mat) = (fr, tw, t);
+                        }
                     }
                     let mut worst = 0.0f32;
                     let mut dir = (0i32, 0i32);
@@ -4230,6 +4239,7 @@ impl World {
             self.thrust_f += (thrust + g.leak_thrust - self.thrust_f) * (dtl / 0.5).min(1.0);
             g.thrust = self.thrust_f;
             g.max_wall_t = maxt;
+            (g.hot_t, g.hot_mat, g.hot_melt) = (hot_t, hot_mat, c::t_melt(hot_mat));
             if self.wall_h_scale > 1.5 && self.events.last().map_or(true, |e| !e.contains("oxygen-rich")) {
                 self.event("oxygen-rich: no cooling film, the walls are taking far more heat".to_string());
             }
