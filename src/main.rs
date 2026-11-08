@@ -112,6 +112,7 @@ struct App {
     world: World,
     rb: Readback,
     view_c: egui::Vec2, // view centre in cells
+    view_reset: u8,     // a view button was pressed: 1 frames the engine (the top rows), 2 the whole grid
     scale: f32,         // points per cell
     mode: u32,
     show_heat: bool,
@@ -195,6 +196,7 @@ impl App {
             world: World::new(),
             rb: Readback::default(),
             view_c: egui::vec2(W as f32 / 2.0, world::VIEW_ROWS as f32 / 2.0),
+            view_reset: 0,
             scale: 0.0,
             mode: 6,
             show_heat: true,
@@ -785,6 +787,14 @@ impl App {
                     });
                 }
                 ui.checkbox(&mut self.world.st.failures, "Walls can melt / burst");
+                ui.horizontal(|ui| {
+                    if ui.button("Engine view").on_hover_text("Frame the top of the grid, where engines are built. The grid goes on 15 m below it: scroll down with Space-drag or the middle mouse button.").clicked() {
+                        self.view_reset = 1;
+                    }
+                    if ui.button("Whole grid").on_hover_text("Zoom out to the whole 6.4 m x 15.4 m grid, to watch a long plume.").clicked() {
+                        self.view_reset = 2;
+                    }
+                });
             });
 
             egui::CollapsingHeader::new("Brush").default_open(true).show(ui, |ui| {
@@ -2090,6 +2100,17 @@ impl eframe::App for App {
             let rect = resp.rect;
             if self.scale == 0.0 {
                 self.scale = rect.height() / world::VIEW_ROWS as f32;
+            }
+            match std::mem::take(&mut self.view_reset) {
+                1 => {
+                    self.scale = rect.height() / world::VIEW_ROWS as f32;
+                    self.view_c = egui::vec2(W as f32 / 2.0, world::VIEW_ROWS as f32 / 2.0);
+                }
+                2 => {
+                    self.scale = rect.height() / H as f32;
+                    self.view_c = egui::vec2(W as f32 / 2.0, H as f32 / 2.0);
+                }
+                _ => {}
             }
             let ppp = ui.ctx().pixels_per_point();
             let to_cell = |p: egui::Pos2, view_c: egui::Vec2, scale: f32| -> egui::Vec2 { view_c + (p - rect.center()) / scale };
@@ -3636,6 +3657,9 @@ fn main() -> eframe::Result {
             }
             if let Some(k) = std::env::var("ROCKET_PLUMESTYLE").ok().and_then(|v| v.parse::<u32>().ok()) {
                 app.world.fx_style = k;
+            }
+            if std::env::var("ROCKET_WHOLEGRID").is_ok() {
+                app.view_reset = 2; // for screenshots: start zoomed out to the whole grid
             }
             if std::env::var("ROCKET_FULLSIM").is_ok() {
                 app.world.fx_plume = false; // for screenshots: the full simulation, no plume shader
