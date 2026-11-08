@@ -1605,7 +1605,7 @@ impl App {
                     _ => "steel",
                 };
                 ui.horizontal(|ui| {
-                    ui.add_sized([70.0, 14.0], egui::Label::new("hottest wall"));
+                    ui.add_sized([70.0, 14.0], egui::Label::new("nearest melt"));
                     ui.add(
                         egui::ProgressBar::new(wall_frac.clamp(0.0, 1.0))
                             .text(if g.hot_melt > 0.0 { format!("{:.0} K {mat}, melts {:.0}", hot_t, melt) } else { format!("{:.0} K", hot_t) })
