@@ -16,9 +16,9 @@ an animation.
 - **Build anything**: steel, copper liner and niobium walls, pipes on three layers, valves, throttle valves,
   regulators, tanks, helium and TEA-TEB bottles, turbopumps sized like real hardware, gas generators and burners,
   electric pumps and batteries. Copy, paste, stamp and undo. Save your designs.
-- **Eleven presets to start from**: Merlin 1D, F-1, J-2, RL10, Rutherford, a hydrolox expander, hydrolox staged
+- **Thirteen presets to start from**: Merlin 1D, F-1, J-2, RL10, Rutherford, a hydrolox expander, hydrolox staged
   combustion, a hydrolox gas generator that exhausts into the nozzle, a pressure-fed hypergolic engine, a
-  tripropellant engine and a linear aerospike.
+  tripropellant engine and three linear aerospikes (pressure-fed, electric pump-fed and gas-generator).
 - **Light it properly**: a cold-gas purge cloud, then start cartridge, helium spin start, TEA-TEB igniter (with its green
   flash) or a dead-head tank-pressure start.
   Valves have stroke times and the liquid in the lines has inertia, so slam a valve and you get water hammer.
@@ -60,14 +60,26 @@ the chamber, bell and plume burn green and white-hot for the first second, then 
   </tr>
 </table>
 
-### The aerospike
+### The aerospikes
 
-A linear aerospike (as on the X-33's XRS-2200): two slot chambers either side of a central spike, with the exhaust expanding
-against the spike's ramp and only the open air for an outer wall, so the nozzle adjusts to the altitude. It is a pressure-fed
-hypergolic engine, so it needs no pumps or igniter. Below is the raw simulation of it at sea level, 8 km and 25 km: a narrow
-column off the spike at sea level, and a widening, billowing jet at altitude.
+Three linear aerospikes (as on the X-33's XRS-2200), each built as a vertical stage: a steel airframe with the helium bottle on
+top, then the fuel and oxidiser tanks, and the engine at the bottom. Two slot chambers sit either side of a central spike, and
+the exhaust expands against the spike's ramp with only the open air for an outer wall, so the nozzle adjusts to the altitude.
+All three are MMH/N2O4 hypergolic, so none needs an igniter.
+
+- **Aerospike**: pressure-fed, a helium-pressurised stage with no pumps.
+- **Aerospike, pump-fed**: electric pumps inside the spike (the engine's tail): an oxidiser pump, a motor and a fuel pump on one
+  shaft down the middle, a battery pack beside the motor, low-pressure tanks and a higher chamber pressure.
+- **Aerospike, gas generator**: a turbopump inside the spike driven by a gas generator, with the generator's exhaust ducted down
+  through the spike and out of its truncated base, filling the wake behind it (base bleed, as on the XRS-2200). It starts on tank
+  head.
+
+Below is the pressure-fed one in the raw simulation at sea level, 8 km and 25 km: a narrow column off the spike at sea level, and
+a widening, billowing jet at altitude. The second picture is the gas-generator version, whole and with a close-up of the base,
+where the dark duct through the spike opens and the generator gas joins the exhaust.
 
 <p align="center"><img src="docs/images/aerospike-altitudes.jpg" width="900" alt="The aerospike firing at sea level, 8 km and 25 km"></p>
+<p align="center"><img src="docs/images/aerospike-gas-generator.jpg" width="700" alt="The gas-generator aerospike, whole and a close-up of its base with the exhaust duct through the spike"></p>
 
 ### In the game
 

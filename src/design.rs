@@ -668,9 +668,40 @@ mod tests {
         }
         // the spike is solid down the middle, and the stabiliser finds its tip (there is no bell for the plume code to find)
         let top = crate::presets::PRESET_OY;
-        assert_ne!(w.cells[World::idx(cx, top + 100)], c::EMPTY);
+        // a vertical stack on the axis: helium bottle, fuel tank, oxidiser tank, then the spike
+        assert_eq!(w.cells[World::idx(cx, top + 15)], c::HE_TANK);
+        assert_eq!(w.cells[World::idx(cx, top + 60)], c::TANK_F);
+        assert_eq!(w.cells[World::idx(cx, top + 130)], c::TANK_O);
+        assert_ne!(w.cells[World::idx(cx, top + 210)], c::EMPTY, "the spike is solid down the middle");
         let (tip, half) = w.find_stab_geom().expect("a stabiliser anchor");
-        assert!(tip > (top + 200) as f32 && half > 20.0, "tip {tip}, half width {half}");
+        assert!(tip > (top + 340) as f32 && half > 20.0, "tip {tip}, half width {half}");
+    }
+
+    #[test]
+    fn pumped_aerospikes_are_plumbed() {
+        // the electric and the gas-generator aerospikes: both feeds through the pumps on one shaft inside the spike, and (gas
+        // generator) a generator that the turbine's drive gas runs from, with its valves opened by the start sequence
+        for k in [11usize, 12] {
+            let mut w = World::new();
+            w.load_preset(k);
+            w.start_sequence();
+            for _ in 0..400 {
+                w.update(&Readback::default(), 1.0 / 60.0);
+            }
+            let nets: Vec<_> = w.nets.iter().filter(|n| n.prop <= 1 && !n.injectors.is_empty()).collect();
+            assert_eq!(nets.len(), 2, "preset {k}: one fuel and one oxidiser network");
+            for n in &nets {
+                assert!(n.tank_cells > 0 && n.p_tank > 0.0, "preset {k}: a network not connected to its tank");
+            }
+            assert_eq!(w.shafts.len(), 1, "preset {k}: one shaft carrying both pumps");
+            assert_eq!(w.gg.len(), if k == 12 { 1 } else { 0 }, "preset {k}: generators");
+            assert!(w.valves.iter().all(|v| v.prop <= 1 && v.cmd), "preset {k}: every valve labelled and opened by the start");
+            if k == 12 {
+                // the spike is cut off, with the exhaust duct opening in its base
+                let (tip, _) = w.find_stab_geom().expect("a stabiliser anchor");
+                assert!(tip > (crate::presets::PRESET_OY + 320) as f32, "tip {tip}");
+            }
+        }
     }
 
     #[test]

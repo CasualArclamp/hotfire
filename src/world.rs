@@ -3002,10 +3002,19 @@ impl World {
         let (xmin, xmax) = (*xs.iter().min()?, *xs.iter().max()?);
         let y0 = n.injectors.iter().map(|&(_, g)| g / W).min()?;
         let xm = (xmin + xmax) / 2;
-        let mut y = y0;
-        while y + 1 < H && self.cells[Self::idx(xm, y)] != c::EMPTY {
+        // down the middle of the spike to its base: the lowest row with a solid cell within 8 cells of the axis, stopping at the
+        // first run of empty rows (a duct through the spike, with solid cells either side, doesn't end it)
+        let (mut y, mut last, mut gap) = (y0, y0, 0);
+        while y + 1 < H && gap < 10 {
+            if (xm.saturating_sub(8)..=xm + 8).any(|x| x < W && self.cells[Self::idx(x, y)] != c::EMPTY) {
+                last = y;
+                gap = 0;
+            } else {
+                gap += 1;
+            }
             y += 1;
         }
+        let y = last;
         if y - y0 < 15 || y + 1 >= H {
             return None;
         }
