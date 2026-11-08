@@ -82,6 +82,7 @@ fn base_color(t: u32) -> vec3<f32> {
         case 10u, 12u: { return vec3<f32>(0.27, 0.78, 0.35); }
         case 11u, 13u: { return vec3<f32>(0.86, 0.24, 0.24); }
         case 14u: { return vec3<f32>(0.59, 0.82, 1.0); }
+        case 34u: { return vec3<f32>(0.78, 0.75, 0.92); }
         case 15u: { return vec3<f32>(1.0, 0.82, 0.59); }
         case 16u: { return vec3<f32>(0.94, 0.90, 0.31); }
         case 17u: { return vec3<f32>(0.88, 0.88, 0.92); }

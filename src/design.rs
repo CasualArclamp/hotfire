@@ -732,6 +732,39 @@ mod tests {
     }
 
     #[test]
+    fn alternating_injector_feeds_both_propellants() {
+        // the hypergolic pressure-fed engine with its injector row swapped for one alternating injector: every other cell
+        // sprays fuel, the ones between oxidiser
+        let mut w = World::new();
+        w.load_preset(3);
+        let row: Vec<usize> = (0..N).filter(|&i| w.cells[i] == c::INJ).collect();
+        assert!(row.len() > 10);
+        let y = row[0] / W;
+        let (x0, x1) = (row.iter().map(|&i| i % W).min().unwrap(), row.iter().map(|&i| i % W).max().unwrap());
+        // (one unbroken line, so one injector touching both manifolds)
+        for x in x0..=x1 {
+            w.set_cell(World::idx(x, y), c::AINJ);
+        }
+        for p in [0, 1] {
+            w.command_all(p, true);
+        }
+        for _ in 0..60 {
+            w.update(&Readback::default(), 1.0 / 60.0);
+        }
+        let (mut nf, mut no) = (0, 0);
+        for n in &w.nets {
+            let k = n.injectors.iter().filter(|&&(i, _)| w.cells[i] == c::AINJ).count();
+            match n.prop {
+                0 => nf += k,
+                1 => no += k,
+                _ => {}
+            }
+        }
+        let xs: Vec<(usize, usize)> = (0..N).filter(|&i| w.cells[i] == c::AINJ).map(|i| (i % W, i / W)).collect();
+        assert!(nf >= 4 && no >= 4 && nf.abs_diff(no) <= 1, "fuel {nf}, oxidiser {no}, cells {xs:?}");
+    }
+
+    #[test]
     fn valves_say_where_they_go() {
         // the gas-generator aerospike: two main valves feed the chamber, two feed the generator
         let mut w = World::new();

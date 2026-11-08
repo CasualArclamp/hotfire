@@ -855,7 +855,7 @@ impl App {
             };
             let groups: [(&str, &[u8]); 5] = [
                 ("Structure", &[c::STEEL, c::COPPER, c::CERAMIC, c::NIOBIUM]),
-                ("Plumbing", &[c::PIPE, c::VALVE, c::THROTTLE, c::JOINT, c::REG, c::INJ, c::HGI]),
+                ("Plumbing", &[c::PIPE, c::VALVE, c::THROTTLE, c::JOINT, c::REG, c::INJ, c::AINJ, c::HGI]),
                 ("Tanks and bottles", &[c::TANK_F, c::TANK_O, c::HE_TANK]),
                 ("Turbopumps and gas generators", &[c::PUMP, c::TURBINE, c::SHAFT, c::GG, c::BURNER, c::CARTRIDGE, c::TEATEB]),
                 ("Electric pumps", &[c::MOTOR, c::BATTERY, c::WIRE]),

@@ -268,7 +268,10 @@ pub mod c {
     /// Palette alias: paints a helium-style bottle holding TEA-TEB, the pyrophoric igniter (triethylaluminium /
     /// triethylborane) that lights on contact with oxygen. Pipe it through a valve to an injector like the helium start.
     pub const TEATEB: u8 = 33;
-    pub const COUNT: u8 = 34;
+    /// Alternating injector: touch a fuel line and an oxidiser line and it sprays fuel from every other cell and oxidiser from
+    /// the cells between (checkerboard by position), into whatever open gas it faces: one part, no separate manifolds.
+    pub const AINJ: u8 = 34;
+    pub const COUNT: u8 = 35;
 
     /// Ids retired when plumbing stopped being fuel- or oxidiser-specific (old saves load as generic parts).
     pub fn canon(t: u8) -> u8 {
@@ -295,6 +298,7 @@ pub mod c {
             VALVE_X => "Valve (closed)",
             INJ => "Injector (opens into the chamber)",
             GG => "Gas generator (touch a fuel pipe and an oxidiser pipe)",
+            AINJ => "Alternating injector (touch a fuel pipe and an oxidiser pipe: fuel and oxidiser from alternate cells)",
             HE_TANK => "Helium bottle (pressurant)",
             TURBINE => "Turbine (diameter sets blade speed, area its gas share)",
             SHAFT => "Shaft (links turbine and pumps)",
@@ -364,6 +368,7 @@ pub mod c {
             VALVE_X => [220, 60, 60],
             INJ => [180, 215, 255],
             GG => [240, 230, 80],
+            AINJ => [200, 190, 235],
             HE_TANK => [225, 225, 235],
             TURBINE => [230, 140, 60],
             SHAFT => [90, 90, 100],
@@ -2266,6 +2271,41 @@ impl World {
             });
         }
 
+        // alternating injectors: each block of touching AINJ cells takes fuel from the fuel line it touches and oxidiser from the
+        // oxidiser line, and sprays fuel from the cells with an even (x + y) and oxidiser from the odd ones, into the open gas
+        // beside them, through the same per-cell injector flow as any other injector
+        for comp in self.components(|i| cells[i] == c::AINJ, |_, _| true) {
+            let (mut nf, mut no) = (None, None);
+            for &i in &comp {
+                let (x, y) = ((i % W) as i32, (i / W) as i32);
+                for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                    let (nx, ny) = (x + dx, y + dy);
+                    if nx < 0 || ny < 0 || nx >= W as i32 || ny >= H as i32 {
+                        continue;
+                    }
+                    let id = self.net_of[Self::idx(nx as usize, ny as usize)];
+                    if id == NO_NET {
+                        continue;
+                    }
+                    match self.nets[id as usize].prop {
+                        0 => nf = nf.or(Some(id as usize)),
+                        1 => no = no.or(Some(id as usize)),
+                        _ => {}
+                    }
+                }
+            }
+            for &i in &comp {
+                let (x, y) = (i % W, i / W);
+                let Some(net) = (if (x + y) % 2 == 0 { nf } else { no }) else { continue };
+                for (nx, ny) in [(x, y + 1), (x, y.wrapping_sub(1)), (x.wrapping_sub(1), y), (x + 1, y)] {
+                    if nx < W && ny < H && cells[Self::idx(nx, ny)] == c::EMPTY {
+                        self.nets[net].injectors.push((i, Self::idx(nx, ny)));
+                        break;
+                    }
+                }
+            }
+        }
+
         // gas generators: each block of touching GG cells is one generator, fed by whatever fuel and
         // oxidiser lines touch it anywhere
         for comp in self.components(|i| matches!(cells[i], c::GG | c::BURNER), |_, _| true) {
@@ -2686,6 +2726,26 @@ impl World {
                 }
             } else if n != NO_NET {
                 self.phase[nd] = DRY;
+            }
+        }
+        // an alternating injector's cell is wet when the liquid reaches the line it touches
+        for n in 0..self.nets.len() {
+            for k in 0..self.nets[n].injectors.len() {
+                let i = self.nets[n].injectors[k].0;
+                if self.cells[i] != c::AINJ {
+                    continue;
+                }
+                let (x, y) = (i % W, i / W);
+                let mut best = DRY;
+                for (nx, ny) in [(x, y + 1), (x, y.wrapping_sub(1)), (x.wrapping_sub(1), y), (x + 1, y)] {
+                    if nx < W && ny < H {
+                        let j = Self::idx(nx, ny);
+                        if self.net_of[j] as usize == n {
+                            best = best.min(self.phase[j] + 1.0);
+                        }
+                    }
+                }
+                self.phase[i] = best;
             }
         }
         for s in &mut self.shafts {

@@ -71,7 +71,7 @@ fn ctype(i: u32) -> u32 { return mat[i] & 255u; }
 fn netid(i: u32) -> u32 { return (mat[i] >> 8u) & 255u; }
 // propellant-cooled cells: pipes (and their kin), and injectors, whose face the propellant flowing through
 // keeps cool (the walls between injector elements lose their heat into them)
-fn is_sink(t: u32) -> bool { return t == 4u || t == 5u || t == 14u; }
+fn is_sink(t: u32) -> bool { return t == 4u || t == 5u || t == 14u || t == 34u; }
 // ... but only while liquid is in them: bit 24 of the material word marks a dry one (the liquid hasn't got
 // there, or the tank is empty), which is just a cavity in the wall that conducts a little and holds its own heat
 fn sinkc(i: u32) -> bool { return is_sink(ctype(i)) && ((mat[i] >> 24u) & 1u) == 0u; }
