@@ -1524,6 +1524,33 @@ he_setpoint 2500000
     }
 
     #[test]
+    fn plume_and_jet_stabiliser_stay_at_the_exit() {
+        for k in [3usize, 14] {
+            let mut w = World::new();
+            w.load_preset(k);
+            run(&mut w, 0.1);
+            // found: the nozzle's exit (a tap-off engine's duct leading off through the chamber wall does not end the walk)
+            assert!(w.plume[0] > 0.5, "preset {k}: nozzle exit found");
+            let (exit_y, hw) = (w.plume[2], w.plume[3]);
+            assert!(hw > 20.0 && exit_y > 300.0, "preset {k}: exit row {exit_y}, half width {hw}");
+            // the stabiliser is fully on within a quarter of the room left under the engine, however low it stands
+            let p = w.sim_params();
+            assert!(p.stab_y > exit_y && p.stab_r <= 0.25 * (H as f32 - p.stab_y) + 1.0, "preset {k}: ramp {} from row {}", p.stab_r, p.stab_y);
+            // a hole burnt through the wall by the throat leaves both where they were
+            let throat_y = w.plume[9] as usize;
+            let xc = w.plume[1] as usize;
+            let wall = (xc..W).find(|&x| w.cells[World::idx(x, throat_y)] != c::EMPTY).unwrap();
+            for x in wall..wall + 12 {
+                for y in throat_y..throat_y + 3 {
+                    w.set_cell(World::idx(x, y), c::EMPTY);
+                }
+            }
+            run(&mut w, 0.1);
+            assert!(w.plume[0] > 0.5 && (w.plume[2] - exit_y).abs() < 1.0, "preset {k}: exit row {} after the hole, {exit_y} before", w.plume[2]);
+        }
+    }
+
+    #[test]
     fn start_lamps_follow_the_sequence() {
         let mut w = World::new();
         w.load_preset(2);
