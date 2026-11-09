@@ -3251,6 +3251,7 @@ fn selftest(seconds: f32, shot: Option<String>, args: &[String]) {
     let mut first = true;
     let mut last_print = 0.0;
     let (mut t_upd, mut t_gpu, mut t_rb) = (0.0f32, 0.0f32, 0.0f32);
+    let mut breath: Vec<f32> = vec![]; // --wander: the jet's width 1.5 exit diameters down, cells
     let mut wander: Vec<[f32; 3]> = vec![]; // --wander: the jet's lateral position at three depths, every 10 frames
     while t0.elapsed().as_secs_f32() < seconds {
         let manual = args.iter().any(|a| a == "--manual");
@@ -3588,6 +3589,7 @@ fn selftest(seconds: f32, shot: Option<String>, args: &[String]) {
                     continue;
                 }
                 let (mut sx, mut sm) = (0.0f64, 0.0f64);
+                let mut wide = 0usize;
                 for x in 0..W {
                     let s = rb.state[World::idx(x, y)];
                     let vy = s[2] / s[0].max(1e-6);
@@ -3595,10 +3597,14 @@ fn selftest(seconds: f32, shot: Option<String>, args: &[String]) {
                         let m = (s[0] * vy) as f64;
                         sx += x as f64 * m;
                         sm += m;
+                        wide += 1;
                     }
                 }
                 if sm > 0.0 {
                     row[k] = (sx / sm) as f32;
+                }
+                if k == 0 {
+                    breath.push(wide as f32);
                 }
             }
             wander.push(row);
@@ -3654,6 +3660,9 @@ fn selftest(seconds: f32, shot: Option<String>, args: &[String]) {
                         println!("   motor {:.0} kW, battery {:.0}% ({:.0} kW of {:.0})", s.p_motor / 1e3, 100.0 * cc.energy / cc.cap.max(1.0), cc.p_draw / 1e3, cc.p_max / 1e3);
                     }
                 }
+            }
+            if w.plume[0] > 0.5 {
+                println!("   plume: exit speed {:.0} m/s, exit pressure {:.2} x ambient, Mach {:.2}, jet half width {:.1} of {:.1}, separated {:.2}", w.plume[4], w.plume[5], w.plume[6], w.plume[15], w.plume[3], w.plume[16]);
             }
             for (ends, outs) in &w.gas_outlets {
                 let avg = |v: &Vec<usize>| v.iter().map(|&j| gas_p(rb.state[j], w.st.p().gamma)).sum::<f32>() / v.len().max(1) as f32 / 1e5;
@@ -3768,6 +3777,12 @@ fn selftest(seconds: f32, shot: Option<String>, args: &[String]) {
                 println!("wander at {name} below the exit: mean x {mean:.1}, std dev {sd:.1} cells, range {lo:.1} .. {hi:.1} ({} samples)", v.len());
             }
         }
+    }
+    if !breath.is_empty() {
+        let mean = breath.iter().sum::<f32>() / breath.len() as f32;
+        let sd = (breath.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / breath.len() as f32).sqrt();
+        let (lo, hi) = (breath.iter().cloned().fold(f32::MAX, f32::min), breath.iter().cloned().fold(f32::MIN, f32::max));
+        println!("jet width 1.5 D below the exit: mean {mean:.0} cells, std dev {sd:.1}, range {lo:.0} .. {hi:.0}");
     }
     if args.iter().any(|a| a == "--plumeinfo") {
         let p = w.plume;
