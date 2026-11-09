@@ -1488,6 +1488,43 @@ he_setpoint 2500000
     }
 
     #[test]
+    fn start_lamps_follow_the_sequence() {
+        let mut w = World::new();
+        w.load_preset(2);
+        w.rebuild_nets();
+        let lamp = |w: &World, name: &str| w.start_lamps().into_iter().find(|l| l.0 == name).map(|l| l.1);
+        // at rest: every lamp dark, and the Merlin's starter is its helium spin
+        assert!(w.start_lamps().iter().all(|l| l.1 == 0), "{:?}", w.start_lamps());
+        assert!(lamp(&w, "HELIUM SPIN").is_some() && lamp(&w, "CARTRIDGE").is_none());
+        w.start_sequence();
+        assert_eq!(lamp(&w, "PURGE"), Some(1));
+        assert_eq!(lamp(&w, "PRIME"), Some(0));
+        // purge over: priming, then the ignition part (oxidiser, igniter) with the purge and prime lamps green
+        let mut seen_prime = false;
+        for _ in 0..400 {
+            run(&mut w, 0.016);
+            if lamp(&w, "PRIME") == Some(1) {
+                seen_prime = true;
+                assert_eq!(lamp(&w, "PURGE"), Some(2));
+                assert_eq!(lamp(&w, "OXIDISER"), Some(0));
+            }
+        }
+        assert!(seen_prime);
+        assert_eq!(lamp(&w, "PRIME"), Some(2), "{:?}", w.start_lamps());
+        assert_ne!(lamp(&w, "OXIDISER"), Some(0), "{:?}", w.start_lamps());
+        // lit: the flame lamp green, and the main-stage lamp ramping or done
+        assert!(w.ignited);
+        assert_eq!(lamp(&w, "LIT"), Some(2));
+        assert_eq!(lamp(&w, "IGNITER"), Some(2));
+        assert_ne!(lamp(&w, "MAIN STAGE"), Some(0), "{:?}", w.start_lamps());
+        // a pressure-fed engine has no starter or generator lamp
+        w.load_preset(3);
+        w.rebuild_nets();
+        let names: Vec<&str> = w.start_lamps().iter().map(|l| l.0).collect();
+        assert_eq!(names, ["PURGE", "PRIME", "OXIDISER", "IGNITER", "LIT", "MAIN STAGE"]);
+    }
+
+    #[test]
     fn dead_headed_primed_pumps_churn_instead_of_running_away() {
         let mut w = World::new();
         w.st.governor = false;

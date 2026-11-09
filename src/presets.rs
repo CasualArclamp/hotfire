@@ -103,7 +103,7 @@ pub fn presets() -> Vec<EngineSpec> {
         jacket: 2.0,
         shell: 2.0,
         fuel_tp: Some(TpSpec { pump_d: 24, stages: 2, turb_d: 24, turb_l: 20 }), // two-stage turbine: the hydrogen pump needs most of the power
-        ox_tp: Some(TpSpec { pump_d: 22, stages: 1, turb_d: 32, turb_l: 3 }),
+        ox_tp: Some(TpSpec { pump_d: 22, stages: 1, turb_d: 26, turb_l: 3 }), // (a wheel a little wider than its pump)
         ox_tank_bottom: 25,
         fuel_tank: (6, 150, 30, 180),
         he: (170, 8, 200, 24),
@@ -297,7 +297,7 @@ pub fn presets() -> Vec<EngineSpec> {
         name: "RL10",
         blurb: "Centaur / Delta upper stage (Aerojet Rocketdyne RL10), the classic expander: no gas generator or preburner, the hydrogen warmed in the cooling jacket is piped through the turbines and drives the pumps. Small: a 8 cm deep engine. Real: 42 bar, mixture 5.5, 99 kN and Isp 451 s in vacuum (try Vacuum). The real one drives its oxidiser pump from the same turbine through a gearbox; here each pump has its own turbine on the jacket's hydrogen line.",
         fuel_tp: Some(TpSpec { pump_d: 10, stages: 2, turb_d: 14, turb_l: 11 }), // two-stage turbine
-        ox_tp: Some(TpSpec { pump_d: 8, stages: 1, turb_d: 32, turb_l: 3 }), // the wheel spans down to the pump
+        ox_tp: Some(TpSpec { pump_d: 8, stages: 1, turb_d: 16, turb_l: 3 }), // (the wheel reaches up from the injector head past its inlet pipe)
         inj: Some((0.065, 0.45)), // injector areas, cm2 a cell
         target_pc: 4.2e6,
         cartridge_w: 1.0e6, // an expander needs no start cartridge: a small spin-up only
@@ -430,7 +430,7 @@ pub fn presets() -> Vec<EngineSpec> {
 fn hydrolox_clone() -> EngineSpec {
     let mut v = presets_base();
     v.fuel_tp = Some(TpSpec { pump_d: 24, stages: 2, turb_d: 24, turb_l: 12 });
-    v.ox_tp = Some(TpSpec { pump_d: 22, stages: 1, turb_d: 32, turb_l: 3 });
+    v.ox_tp = Some(TpSpec { pump_d: 22, stages: 1, turb_d: 26, turb_l: 3 });
     v
 }
 

@@ -1317,6 +1317,49 @@ impl World {
         })
     }
 
+    /// The start sequence as a row of status lamps: (label, state, what it means), state 0 off, 1 in progress, 2 done.
+    /// Only the steps this engine has are listed (no starter lamp without pumps, no generator lamp without a generator).
+    pub fn start_lamps(&self) -> Vec<(&'static str, u8, &'static str)> {
+        let starting = self.start_t > 0.0 || self.purge_t > 0.0 || self.priming >= 0.0 || !self.seq.is_empty();
+        let live = starting || self.ignited;
+        let lamp = |active: bool, done: bool| if active { 1 } else if done { 2 } else { 0 };
+        let past_prime = live && self.purge_t <= 0.0 && self.priming < 0.0;
+        let mut out = vec![
+            ("PURGE", lamp(self.purge_t > 0.0, live), "Inert gas blown through the injectors and chamber to clear out propellant vapour"),
+            ("PRIME", lamp(self.priming >= 0.0, past_prime), "Fuel valves open: fuel runs down the lines (and round the cooling jacket) to the injectors"),
+        ];
+        if self.shafts.iter().any(|s| !s.pumps.is_empty()) {
+            let he = self.valves.iter().any(|v| v.prop == PROP_HE && !v.tea && v.cmd);
+            let motors = self.shafts.iter().any(|s| s.motor_cells > 0);
+            let up = self.shafts.iter().filter(|s| !s.pumps.is_empty()).all(|s| s.omega > 0.0 && s.p_load > 0.0);
+            let (name, tip, active) = if motors {
+                ("MOTORS", "Electric motors spinning the pumps up from the battery", self.motors_on && !self.ignited)
+            } else if self.deadhead_t > 0.0 || self.st.dead_start {
+                ("TANK HEAD", "No starter: propellant runs through on tank pressure and the generator's own gas spins the pumps up, the main injectors held back", self.deadhead_t > 0.0)
+            } else if he || self.st.he_spin || self.helium_start_line() {
+                ("HELIUM SPIN", "Cold helium from the bottle blown through the turbine to spin the pumps up", he || (self.st.he_spin && self.cartridge_t > 0.0))
+            } else {
+                ("CARTRIDGE", "A solid-propellant start cartridge blowing hot gas through the turbine to spin the pumps up", self.cartridge_t > 0.0)
+            };
+            out.push((name, lamp(active && live, past_prime && up), tip));
+        }
+        if !self.gg.is_empty() || self.gg_lit {
+            out.push(("GENERATOR", lamp(live && !self.gg_lit, self.gg_lit), "Gas generator (or preburner) valves open and its gas burning: it takes over driving the turbines"));
+        }
+        let ox: Vec<&ValveGroup> = self.valves.iter().filter(|v| v.prop == 1 && !v.tea).collect();
+        if !ox.is_empty() {
+            let cmd = ox.iter().any(|v| v.cmd);
+            let open = ox.iter().filter(|v| v.cmd).all(|v| v.pos > 0.97);
+            out.push(("OXIDISER", lamp(cmd && !open, cmd && open), "Oxidiser valves opening (slowly, so nothing surges)"));
+        }
+        let tea = self.valves.iter().any(|v| v.tea && v.cmd);
+        out.push(("IGNITER", lamp(!self.ignited && (self.spark_t > 0.0 || self.igniter || tea), self.ignited), "Spark igniter firing, or TEA-TEB sprayed in (it lights on contact, with a green flash)"));
+        out.push(("LIT", lamp(!self.ignited && past_prime && self.g.mdot_f + self.g.mdot_o > 0.5, self.ignited), "Flame in the main chamber"));
+        let ramp = self.ignited && self.start_t > 0.0 && self.shut_thr < 1.0;
+        out.push(("MAIN STAGE", lamp(ramp, self.ignited && !ramp), "Throttle valves brought up from 40% to the throttle setting: full thrust"));
+        out
+    }
+
     /// Nothing is running: no valve commanded open, no start sequence, igniter off, no flame.
     pub fn idle(&self) -> bool {
         !self.ignited && !self.igniter && self.seq.is_empty() && self.priming < 0.0 && self.valves.iter().all(|v| !v.cmd)

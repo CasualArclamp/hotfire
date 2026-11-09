@@ -1363,6 +1363,30 @@ impl App {
                     act = Some(2);
                 }
             });
+            // start sequence lamps: grey not yet, amber (blinking) in progress, green done
+            let blink = ui.input(|i| i.time).fract() < 0.6;
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(8.0, 2.0);
+                for (name, state, tip) in w.start_lamps() {
+                    let col = match state {
+                        1 if blink => warn,
+                        1 => egui::Color32::from_rgb(120, 95, 40),
+                        2 => good,
+                        _ => egui::Color32::from_gray(55),
+                    };
+                    let text = egui::RichText::new(name).small().color(if state == 0 { dim } else { egui::Color32::from_gray(225) });
+                    let resp = ui
+                        .horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 3.0;
+                            let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+                            ui.painter().circle_filled(rect.center(), 4.5, col);
+                            ui.painter().circle_stroke(rect.center(), 4.5, egui::Stroke::new(1.0, egui::Color32::from_gray(20)));
+                            ui.label(text);
+                        })
+                        .response;
+                    resp.on_hover_text(tip);
+                }
+            });
             if !g.ignited && !g.no_flame.is_empty() {
                 ui.colored_label(warn, g.no_flame);
             }
