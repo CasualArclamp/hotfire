@@ -350,6 +350,7 @@ impl World {
             ("h0", s.h0),
             ("throttle", s.throttle),
             ("mix_target", s.mix_target),
+            ("gg_t_target", s.gg_t_target),
             ("cartridge_w", s.cartridge_w),
         ] {
             o += &format!("{k} {v}\n");
@@ -455,6 +456,7 @@ impl World {
                 "h0" => st.h0 = f,
                 "throttle" => st.throttle = f.clamp(0.0, 1.0),
                 "mix_target" => st.mix_target = f.clamp(0.0, 20.0),
+                "gg_t_target" => st.gg_t_target = f.clamp(0.0, 1300.0),
                 _ => {}
             }
         }

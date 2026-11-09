@@ -328,8 +328,13 @@ copy target\release\rocket_sandbox.exe hotfire\Hotfire.exe
   - Both propellants come in on the top edge and leave on the bottom edge through a main valve and a throttle
     valve, so tanks above and a chamber below join up without crossing. The turbine exhaust leaves at the
     bottom edge, under the last wheel. The generator taps both pump outlets through the back pipe layer.
-  - **Place powerhead** puts it on the cursor and sets the gas generator orifices, the pump governor, the start
-    cartridge and the mixture control. Once it's piped up, **Size injectors for it** sizes the injectors for
+  - The generator's two feed lines tap the pumps upstream of the main valves, so each has its own valve beside
+    the generator's head: nothing runs through it until the start sequence opens them.
+  - **Generator temperature control** (*Simulation > Hold gas generator at*, set by the maker): the generator's
+    oxidiser valve closes down whenever its gas runs hotter than the turbine temperature you chose, so a lean
+    spell while the pumps spin up or the throttle moves cannot cook the turbine. It is saved with designs.
+  - **Place powerhead** puts it on the cursor and sets the gas generator orifices and its temperature control,
+    the pump governor, the start cartridge and the mixture control. Once it's piped up, **Size injectors for it** sizes the injectors for
     the chosen chamber pressure.
   - The start cartridge power is now saved with designs.
 - - **Engine panel (right)**: what the engine is doing at a glance. It hides with *View > Engine panel*.

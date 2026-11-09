@@ -430,6 +430,7 @@ pub struct Settings {
     pub steps_per_frame: u32, // gas steps per 1/60 s of real time (independent of the display's frame rate)
     pub throttle: f32,        // throttle setting, 0..1: the opening commanded of every throttle valve
     pub mix_target: f32,      // mixture-ratio control: the O/F the throttle valves trim towards (0: off)
+    pub gg_t_target: f32,     // gas generator temperature control: its oxidiser valve trims the gas to this, K (0: off)
     pub fps_cap: f32,         // redraws per second at most
     pub heat_accel: f32,
     pub h0: f32,
@@ -495,6 +496,7 @@ impl Default for Settings {
             steps_per_frame: 100,
             throttle: 1.0,
             mix_target: 0.0,
+            gg_t_target: 0.0,
             fps_cap: 60.0,
             heat_accel: 1500.0,
             h0: 3.0,
@@ -1065,6 +1067,7 @@ pub struct World {
     pub ignited: bool,
     pub gg_lit: bool,
     pub gg_hot_t: f32,
+    pub gg_trim: f32, // how far open the temperature control holds the generators' oxidiser valves (0.3..1)
     pub spark_t: f32,
     pub igniter: bool, // igniter switched on (stays armed until switched off)
     pub gas_paint: Vec<(usize, u8)>, // gas painted this frame: 0 inert gas, 1 fuel vapour, 2 fire
@@ -1173,6 +1176,7 @@ impl World {
             ignited: false,
             gg_lit: false,
             gg_hot_t: 0.0,
+            gg_trim: 1.0,
             spark_t: 0.0,
             igniter: false,
             gas_paint: vec![],
@@ -3860,6 +3864,9 @@ impl World {
             if self.nets.iter().any(|n| n.throttle) {
                 mo *= self.throttle_pos.clamp(0.05, 1.0);
             }
+            if st.gg_t_target > 0.0 {
+                mo *= self.gg_trim;
+            }
             self.nets[fi].gg_draw += mf;
             self.nets[oi].gg_draw += mo;
             if mf + mo > 1e-3 {
@@ -3899,6 +3906,15 @@ impl World {
             || self.gg_faces.iter().any(|f| flame_at(f.iter().map(|x| x.1), rb, pr))
         {
             self.gg_lit = true;
+        }
+        // temperature control: the generators' oxidiser valve closes down while the gas is hotter than the target and
+        // opens again (as far as fully open) while it is cooler. A pump that comes up to speed before the other, or a
+        // drop in the fuel pressure, would otherwise run the generator lean and cook the turbine.
+        if st.gg_t_target > 0.0 && gg_t > 0.0 {
+            let err = ((st.gg_t_target - gg_t) / st.gg_t_target).clamp(-0.5, 0.5);
+            self.gg_trim = (self.gg_trim * (1.0 + 4.0 * err * dtl.min(0.05))).clamp(0.3, 1.0);
+        } else if st.gg_t_target <= 0.0 || !gg_flow {
+            self.gg_trim = 1.0;
         }
         self.gg_hot_t = if gg_t > 1300.0 { self.gg_hot_t + dtl } else { 0.0 };
         if self.gg_hot_t > 0.5 && self.events.last().map_or(true, |e| !e.contains("preburner")) {
