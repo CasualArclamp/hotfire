@@ -60,6 +60,7 @@ const VMAX: f32 = 6000.0;
 const CMAX: f32 = 4000.0;
 const TMIN: f32 = 10.0;
 const SPONGE: i32 = 24; // absorbing border width, cells
+const STILL_AIR_K: f32 = 0.003; // quiet air thinned by the jet's pull relaxes to ambient at this fraction a base step
 
 // effective slab depth of a cell: constant, or 2*pi*r for a round (axisymmetric) engine
 fn depth_eff(x: i32) -> f32 {
@@ -202,15 +203,23 @@ fn gas_update(x: i32, y: i32, i: u32) {
 
     // the atmosphere follows the altitude: quiet air at ambient temperature anywhere in the world relaxes to the
     // ambient density while the altitude is changing (the plume, shocks and hot gas are left alone)
-    if (p.amb_k > 0.0) {
+    //
+    // And at any time, quiet air that is at or below the ambient pressure is topped up, slowly. A jet drags the air beside it
+    // away with it; in the open that air is replaced from all round, but in this flat slice of the world it can only come in
+    // past the jet from the edges, and for a wide exhaust it cannot come fast enough: the air beside the jet thins, the jet
+    // balloons out into it, air rushes back, and the whole exhaust breathes in and out. (Gas shut in a vessel above the
+    // ambient pressure is left alone.)
+    {
         let rq = max(N.x, p.rho_min);
         let uq = N.y / rq;
         let vq = N.z / rq;
         let Tq = gas_temp(N);
         // (the wind past the vehicle is quiet air too: it is pulled towards the wind speed)
         let dvq = vq - p.amb_v;
-        if (uq * uq + dvq * dvq < 1600.0 && Tq > 180.0 && Tq < 420.0) {
-            let kq = 1.0 - pow(1.0 - p.amb_k, dtk / p.dt);
+        let thinned = rq * Tq < 1.3 * p.amb_rho * p.amb_t;
+        let rate = max(p.amb_k, select(0.0, STILL_AIR_K, thinned));
+        if (rate > 0.0 && uq * uq + dvq * dvq < 1600.0 && Tq > 180.0 && Tq < 420.0) {
+            let kq = 1.0 - pow(1.0 - rate, dtk / p.dt);
             let raq = p.amb_rho;
             let vt = vq + (p.amb_v - vq) * 0.5;
             let ambq = vec4<f32>(raq, raq * uq, raq * vt, raq * p.rgas / (p.gamma - 1.0) * p.amb_t + 0.5 * raq * (uq * uq + vt * vt));
