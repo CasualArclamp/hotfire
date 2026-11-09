@@ -1645,7 +1645,10 @@ impl World {
         // the jet stabiliser starts one exit diameter below the nozzle exit
         if let Some((ye, hw)) = self.stab_geom {
             p.stab_y = ye + 2.0 * hw;
-            p.stab_r = 10.0 * hw; // fully on about six exit diameters down
+            // fully on about six exit diameters down, or a quarter of the way to the bottom of the world if that is nearer:
+            // an engine standing low in the world (under a tank stack) with a wide exit would otherwise leave the
+            // stabiliser no room to take hold, and its exhaust swings from side to side
+            p.stab_r = (10.0 * hw).min(0.25 * (H as f32 - p.stab_y).max(0.0));
             p.stab_k = if self.stable_jet { JET_STABILISER } else { 0.0 };
         }
         p
@@ -3190,9 +3193,10 @@ impl World {
         let mut last: Option<(usize, usize, usize)> = None;
         let mut rows = 0;
         let (mut throat_w, mut throat_y) = (usize::MAX, 0usize);
-        for y in y0..H {
+        // the gas passage on a row, if it is walled in on both sides there
+        let span = |xc: usize, y: usize| -> Option<(usize, usize)> {
             if self.cells[Self::idx(xc, y)] != c::EMPTY {
-                break;
+                return None;
             }
             let (mut l, mut r) = (xc, xc);
             while l > 0 && self.cells[Self::idx(l - 1, y)] == c::EMPTY {
@@ -3201,9 +3205,30 @@ impl World {
             while r + 1 < W && self.cells[Self::idx(r + 1, y)] == c::EMPTY {
                 r += 1;
             }
-            if l == 0 || r + 1 >= W || r - l > 400 {
+            (l > 0 && r + 1 < W && r - l <= 400).then_some((l, r))
+        };
+        for y in y0..H {
+            if self.cells[Self::idx(xc, y)] != c::EMPTY {
                 break;
             }
+            // open to the side here, or suddenly much wider than the row above (a duct leading off through the wall, as a
+            // tap-off engine has). A hole burnt or knocked through the wall is not the end of the nozzle either: if the
+            // walls carry on as they were within a few rows, so does the walk (else the plume and the jet stabiliser would
+            // both move up to the hole, and the whole exhaust be left to flap about)
+            let fits = |sp: Option<(usize, usize)>| match (sp, last) {
+                (Some((l, r)), Some((pl, pr, _))) => r - l <= (pr - pl) * 3 / 2 + 12,
+                (sp, _) => sp.is_some(),
+            };
+            let sp = span(xc, y);
+            if !fits(sp) {
+                if (y + 1..(y + 13).min(H)).any(|yy| fits(span(xc, yy))) {
+                    continue;
+                }
+                if sp.is_none() {
+                    break;
+                }
+            }
+            let Some((l, r)) = sp else { break };
             last = Some((l, r, y));
             if r - l < throat_w {
                 throat_w = r - l;
@@ -4709,7 +4734,14 @@ impl World {
                 }
             }
             // the flow is unsteady from frame to frame; the gauge reads it averaged over ~0.5 s
-            self.thrust_f += (thrust + g.leak_thrust - self.thrust_f) * (dtl / 0.5).min(1.0);
+            // (one bad number from a cell that has just failed must not stick in the gauge for good)
+            if !self.thrust_f.is_finite() {
+                self.thrust_f = 0.0;
+            }
+            let now = thrust + g.leak_thrust;
+            if now.is_finite() {
+                self.thrust_f += (now - self.thrust_f) * (dtl / 0.5).min(1.0);
+            }
             g.thrust = self.thrust_f;
             g.max_wall_t = maxt;
             (g.hot_t, g.hot_mat, g.hot_melt) = (hot_t, hot_mat, c::t_melt(hot_mat));
