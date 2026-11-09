@@ -661,7 +661,7 @@ impl App {
                     ui.add_space(6.0);
                     place = ui
                         .button(egui::RichText::new("Place powerhead").strong())
-                        .on_hover_text("Click on the field to put it down (R turns it, Shift+R mirrors it). Also sets the gas generator orifices, pump governor, start cartridge and mixture control.")
+                        .on_hover_text("Click on the field to put it down (R turns it, Shift+R mirrors it). Also sets the gas generator orifices and its temperature control, the pump governor, start cartridge and mixture control.")
                         .clicked();
                     size_inj = ui.button("Size injectors for it").on_hover_text("Once it's piped up to the tanks and chamber: size the injectors for this chamber pressure").clicked();
                 });
@@ -1198,6 +1198,18 @@ impl App {
             ui.collapsing("Simulation", |ui| {
                 let s = &mut self.world.st;
                 ui.add(egui::Slider::new(&mut s.cartridge_w, 1.0e5..=2.0e8).logarithmic(true).text("start cartridge W"));
+                let mut hold = s.gg_t_target > 0.0;
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut hold, "Hold gas generator at").on_hover_text("Temperature control: the gas generator's oxidiser valve closes down whenever its gas runs hotter than this, so a lean spell (one pump up to speed before the other, a throttle change) cannot cook the turbine. It can only close the valve, so the oxidiser orifice has to be big enough to reach the temperature in the first place. The powerhead maker sets it up.");
+                    if hold {
+                        if s.gg_t_target <= 0.0 {
+                            s.gg_t_target = 1000.0;
+                        }
+                        ui.add(egui::Slider::new(&mut s.gg_t_target, 850.0..=1300.0).suffix(" K"));
+                    } else {
+                        s.gg_t_target = 0.0;
+                    }
+                });
                 ui.checkbox(&mut s.dead_start, "Tank-head (dead-head) start").on_hover_text("No starter at all, like the RS-25: propellant runs through on tank pressure, the preburners / gas generator light and their gas spins the pumps up while the main injectors are held back, then the main chamber opens up as the pumps come up to speed. Needs a gas generator or preburner.");
                 ui.checkbox(&mut s.he_spin, "Helium spin start").on_hover_text("Spin the turbopumps up with cold helium from the bottle expanding through the turbines, instead of a solid-propellant start cartridge. The bottle empties as it does (it needs a helium bottle in the build; the cartridge's power setting is the most it gives, at least 10 MW).");
                 ui.add(egui::Slider::new(&mut s.steps_per_frame, 0..=600).text("gas steps per 1/60 s"))
@@ -3587,7 +3599,7 @@ fn selftest(seconds: f32, shot: Option<String>, args: &[String]) {
                 if rb.valid && !f.is_empty() {
                     let p = f.iter().map(|x| gas_p(rb.state[x.1], w.st.p().gamma)).sum::<f32>() / f.len() as f32;
                     let draw: f32 = w.nets.iter().map(|n| n.gg_draw).sum();
-                    println!("   generator {}: chamber {:.1} bar (set {:.0}), all generators draw {:.2} kg/s", k + 1, p / 1e5, w.st.gg_p / 1e5, draw);
+                    println!("   generator {}: chamber {:.1} bar (set {:.0}), all generators draw {:.2} kg/s, gas {:.0} K (hold {:.0}), oxidiser valve {:.0}%", k + 1, p / 1e5, w.st.gg_p / 1e5, draw, w.g.t_gg, w.st.gg_t_target, w.gg_trim * 100.0);
                 }
             }
             for n in w.nets.iter().filter(|n| !n.injectors.is_empty()) {

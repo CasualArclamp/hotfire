@@ -31,6 +31,8 @@ const NOZ_LOSS: f32 = 1.18;
 const P_EXH: f32 = 1.5e5;
 /// The generator runs at no more than this share of the lower pump discharge pressure (its injectors need the rest).
 const GG_P_SHARE: f32 = 0.65;
+/// Where the generator's temperature control holds its oxidiser valve at the design point.
+const GG_TRIM_DESIGN: f32 = 0.85;
 /// Turbine power over what the pumps take at the design point: the governor's bypass trims the surplus off.
 const POWER_MARGIN: f32 = 1.25;
 
@@ -110,6 +112,7 @@ pub struct PhSize {
     pub p_dis_o: f32,
     pub shafts: Vec<ShaftSize>,
     pub gg_of: f32,
+    pub gg_t: f32, // drive gas temperature the generator is sized for, K
     pub gg_mdot: f32,
     pub gg_area_f: f32, // cm^2
     pub gg_area_o: f32,
@@ -427,7 +430,8 @@ pub fn size(i: &PhInput) -> PhSize {
     let mo_gg = gg_mdot - mf_gg;
     let area = |m: f32, rho: f32, dp: f32| m / (0.7 * (2.0 * rho * dp.max(1e5)).sqrt()) * 1e4;
     let gg_area_f = area(mf_gg, p.rho_f, p_dis_f - gg_p);
-    let gg_area_o = area(mo_gg, p.rho_o, p_dis_o - gg_p);
+    // (the oxidiser orifice a size over: the temperature control holds its valve at about 85% and has room to open)
+    let gg_area_o = area(mo_gg, p.rho_o, p_dis_o - gg_p) / GG_TRIM_DESIGN;
     if shafts.iter().any(|s| s.speed_frac > 0.8) {
         notes.push("A rotor runs close to its tip-speed rating: a lower chamber pressure or a bigger throat gives more margin.".into());
     }
@@ -439,6 +443,7 @@ pub fn size(i: &PhInput) -> PhSize {
         p_dis_o,
         shafts,
         gg_of,
+        gg_t: t_gg,
         gg_mdot,
         gg_area_f,
         gg_area_o,
@@ -482,7 +487,8 @@ fn carve(b: &mut Board, x0: i32, y0: i32, x1: i32, y1: i32) {
 /// reducer narrowing to the nozzle into the top of the first wheel, out of the bottom of that wheel and (two shafts)
 /// through a second reducer and nozzle into the wheel below, then out of the bottom edge. Both propellants come in on
 /// the top edge and leave on the bottom edge through a main valve and a throttle valve, so tanks above and a chamber
-/// below join up without crossing. The generator taps both pump discharges through the back pipe layer.
+/// below join up without crossing. The generator taps both pump discharges through the back pipe layer, with a valve
+/// on each feed beside its head.
 pub fn build(s: &PhSize) -> (Clip, Vec<Port>) {
     let twin = s.shafts.len() == 2;
     let fp = &s.shafts[0].pumps[0];
@@ -502,7 +508,8 @@ pub fn build(s: &PhSize) -> (Clip, Vec<Port>) {
         wc += 1;
     }
     // everything the gas goes through is centred on one column
-    let xc = end0.max(end1) + gap + (wc.max(l0).max(l1) + 1) / 2;
+    // (the generator's feed valves stick out five cells either side of its head)
+    let xc = end0.max(end1) + gap + ((wc + 12).max(l0).max(l1) + 1) / 2;
     let xt0 = xc - l0 / 2;
     let xt1 = xc - l1 / 2;
     let (cx0, nx0) = (xc - wc / 2, xc - n0 / 2);
@@ -530,7 +537,7 @@ pub fn build(s: &PhSize) -> (Clip, Vec<Port>) {
     let fb = top_f + fp.cells - 1;
     let (xtl, ll, tb) = if twin { (xt1, l1, ty1 + d1 - 1) } else { (xt0, l0, by0) }; // the last wheel: left end, length, bottom row
     let h = (ob + 15).max(tb + 8).max(fb + 16);
-    let xr = (cx1 + 3).max(xt0 + l0 + 1).max(if twin { xt1 + l1 + 1 } else { 0 }); // right edge of the casings
+    let xr = (cx1 + 7).max(xt0 + l0 + 1).max(if twin { xt1 + l1 + 1 } else { 0 }); // right edge of the casings
     let xb = xr + 2; // the generator's oxidiser tap comes up the right side on the back layer
     let w = xb + 3;
     let mut b = Board::new(w as usize, h as usize);
@@ -558,8 +565,13 @@ pub fn build(s: &PhSize) -> (Clip, Vec<Port>) {
     }
     // gas generator: injector head, chamber, reducer and nozzle in a thick steel body on top of the first wheel
     b.rect(cx0, yg, cx1, yg + 1, c::GG);
-    b.rect(cx0 - 1, yg, cx0 - 1, yg + 1, c::JOINT);
-    b.rect(cx1 + 1, yg, cx1 + 1, yg + 1, c::JOINT);
+    // its two feeds come up on the back layer and in through a valve each side of the head (the taps are upstream of
+    // the main valves: without these the propellants would run through the generator as soon as the tanks are on)
+    for (x_in, dir) in [(cx0 - 1, -1), (cx1 + 1, 1)] {
+        b.rect(x_in.min(x_in + 3 * dir), yg, x_in.max(x_in + 3 * dir), yg + 1, c::PIPE);
+        b.rect((x_in + dir).min(x_in + 2 * dir), yg, (x_in + dir).max(x_in + 2 * dir), yg + 1, c::VALVE_X);
+        b.rect(x_in + 4 * dir, yg, x_in + 4 * dir, yg + 1, c::JOINT);
+    }
     carve(&mut b, cx0, yg + 2, cx1, yg + 1 + hc);
     for k in 0..nf {
         carve(&mut b, cx0 + k + 1, yg + 2 + hc + k, cx1 - k - 1, yg + 2 + hc + k);
@@ -605,7 +617,7 @@ pub fn build(s: &PhSize) -> (Clip, Vec<Port>) {
     ports.push(Port { name: "fuel out (to the cooling jacket)", x: xfv, y: h - 1 });
     b.rect(xj, cy0 - 1, xj + 1, cy0, c::JOINT);
     b.back_rect(xj, yg, xj + 1, cy0);
-    b.back_rect(xj, yg, cx0 - 1, yg + 1);
+    b.back_rect(xj, yg, cx0 - 5, yg + 1);
     // oxidiser: in from the top (straight down to its pump, or down the left to the lower shaft), out of
     // the bottom through the generator tap and the valves
     let xom = xo + (op.len - 2).max(0) / 2;
@@ -626,7 +638,7 @@ pub fn build(s: &PhSize) -> (Clip, Vec<Port>) {
     ports.push(Port { name: "oxidiser out (to the injectors)", x: xom, y: h - 1 });
     b.back_rect(xom, ob + 2, xb + 1, ob + 3);
     b.back_rect(xb, yg, xb + 1, ob + 3);
-    b.back_rect(cx1 + 1, yg, xb + 1, yg + 1);
+    b.back_rect(cx1 + 5, yg, xb + 1, yg + 1);
     ports.push(Port { name: "turbine exhaust", x: xtl, y: h - 1 });
     (b.clip(), ports)
 }
@@ -637,6 +649,8 @@ pub fn apply(s: &PhSize, st: &mut Settings) {
     st.gg_area_f = s.gg_area_f;
     st.gg_area_o = s.gg_area_o;
     st.gg_p = s.gg_p;
+    // the generator's oxidiser valve holds the gas at the temperature the turbines were sized for
+    st.gg_t_target = s.gg_t;
     st.feed_p_max = s.feed_p_max;
     st.cartridge_w = s.cartridge_w;
     // the throttle valves trim the mixture to the best ratio, whatever the lines lose
@@ -750,6 +764,17 @@ mod tests {
                 i.layout = layout;
                 let s = demo_engine(&mut w, &i);
                 let what = format!("{} {:?}", PROPS[prop].name, layout);
+                // as placed, every valve shut: nothing reaches the generator (its feeds tap the pumps upstream of the
+                // main valves, so they have valves of their own), and the start sequence has four valves to open
+                assert_eq!(w.gg.len(), 0, "{what}: propellant reaches the generator past shut valves");
+                assert_eq!(w.valves.len(), 4, "{what}: two main valves and two generator valves");
+                w.command_all(0, true);
+                w.command_all(1, true);
+                // (the plumbing stepped without the gas solver while the valves travel open)
+                let rb = crate::world::Readback::default();
+                for _ in 0..250 {
+                    w.update(&rb, 0.016);
+                }
                 // sized sensibly: every pump makes its head near its best flow, no rotor near its limit
                 for sh in &s.shafts {
                     assert!(sh.speed_frac < 0.8, "{what}: {:.2} of rated", sh.speed_frac);
