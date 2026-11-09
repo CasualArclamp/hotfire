@@ -1044,6 +1044,8 @@ he_setpoint 2500000
         let mut w = World::new();
         let mut e = crate::presets::presets().into_iter().nth(4).unwrap();
         e.twin_shaft = false; // the classic layout: generator not ducted to the turbines
+        e.stage = false; // (drawn the old way, tanks beside the engine: the generator stands in the open there)
+        e.inj = Some((0.95, 2.2));
         w.build_engine(&e);
         w.st.boil_speed = 0.0; // this plumbing-only harness has no real chamber and sits on a knife edge
         w.st.amb_p = 100.0; // ... so it runs in vacuum (the GPU self-test covers the sea-level start)
@@ -1185,11 +1187,11 @@ he_setpoint 2500000
         let (ox, oy) = (crate::presets::PRESET_OX, crate::presets::PRESET_OY);
         let mut w = World::new();
         w.load_preset(3);
-        // knock a hole in the wall above the oxidiser tank and beside the helium bank
-        let hole = World::idx(120 + ox, 7 + oy);
+        // knock a hole in the wall above the oxidiser tank (the lower one of the stack) and beside the helium bottle
+        let hole = (20..200).map(|y| World::idx(120 + ox, y + oy)).find(|&i| w.cells[i] == c::STEEL && w.cells[i + W] == c::TANK_O).expect("the oxidiser tank's top wall");
         assert_eq!(w.cells[hole], c::STEEL);
         w.set_cell(hole, c::EMPTY);
-        let he_hole = World::idx(185 + ox, 41 + oy);
+        let he_hole = World::idx(109 + ox, 12 + oy);
         assert_eq!(w.cells[he_hole], c::STEEL);
         w.set_cell(he_hole, c::EMPTY);
         let before = w.nets.iter().filter(|n| n.prop == 1).map(|n| n.mass_frac).fold(0.0, f32::max);
@@ -1489,6 +1491,7 @@ he_setpoint 2500000
     fn dead_headed_primed_pumps_churn_instead_of_running_away() {
         let mut w = World::new();
         w.st.governor = false;
+        run(&mut w, 1.0); // (the feed lines fill from the tank stack down to the pumps)
         w.cartridge_t = 30.0; // start cartridge with every valve shut: the pumps are full but nothing flows
         run(&mut w, 8.0);
         assert!(!w.events.iter().any(|e| e.contains("overspeed")), "{:?}", w.events);
@@ -1856,8 +1859,12 @@ he_setpoint 2500000
             assert!(w.gg.is_empty());
             let cell = w.cells.iter().position(|&v| v == c::BURNER).unwrap();
             let (dir, fuel_low) = w.burner_view[w.block_of[cell] as usize];
-            if matches!(k, 1 | 4 | 5) {
+            if k == 5 {
                 assert_eq!((dir, fuel_low), (-1.0, false), "preset {k}");
+            } else {
+                // a powerhead from the maker: the outlet below, onto the turbine, the fuel in on the left
+                assert_eq!((dir, fuel_low), (1.0, true), "preset {k}");
+                assert!(!w.blocks[w.block_of[cell] as usize].horizontal, "preset {k}: the burner points down");
             }
             // its feed valves open at the start: the burner is then joined to both lines
             open_all(&mut w);
@@ -1935,8 +1942,9 @@ he_setpoint 2500000
         w.rebuild_nets();
         assert!(w.shafts.iter().all(|s| s.cart_cells == 0));
         // a cartridge cell on an empty cell next to a turbine cell
-        let t = (0..N).find(|&i| w.cells[i] == c::TURBINE && w.cells[i - 1] == c::EMPTY).expect("a turbine with open space beside it");
-        w.set_cell(t - 1, c::CARTRIDGE);
+        // (the wheel is cased in: the open space against it is its exhaust duct, below)
+        let t = (0..N).find(|&i| w.cells[i] == c::TURBINE && w.cells[i + W] == c::EMPTY).expect("a turbine with open space beside it");
+        w.set_cell(t + W, c::CARTRIDGE);
         w.rebuild_nets();
         assert_eq!(w.shafts.iter().map(|s| s.cart_cells).sum::<usize>(), 1);
     }

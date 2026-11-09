@@ -3962,7 +3962,15 @@ impl World {
         // tank-head start: the main injectors are held back until the pumps are up to speed
         let dead = if self.deadhead_t > 0.0 {
             self.deadhead_t -= dtl;
-            let x = self.shafts.iter().filter(|s| !s.pumps.is_empty()).map(|s| s.x()).fold(f32::MAX, f32::min);
+            // (up to speed: 70% of the rotor's rated speed, or its pumps delivering 70% of the governor's pressure. A pump
+            // sized for a dense propellant makes its pressure far below the speed its rotor is rated for.)
+            let feed = st.feed_p_max.max(1.0);
+            let x = self
+                .shafts
+                .iter()
+                .filter(|s| !s.pumps.is_empty())
+                .map(|s| s.pumps.iter().map(|p| self.nets.get(p.net).map_or(0.0, |n| n.p_up / feed)).fold(s.x(), f32::max))
+                .fold(f32::MAX, f32::min);
             if x >= 0.7 || x == f32::MAX {
                 self.deadhead_t = 0.0;
             }
@@ -4077,7 +4085,19 @@ impl World {
             // the liquid front runs down empty lines from the tank at the speed the feed pressure drives
             // it (capped by the fill-speed setting so it can be watched); nothing past it gets liquid
             if n.tank_cells > 0 && n.mass_frac > 0.0 && n.front < n.max_phase + 1.0 {
-                let open = n.valves.iter().map(|&v| self.valves[v].pos).fold(1.0f32, f32::min);
+                // a part-open valve holds the front back only while the front is going through it: one it has passed, or
+                // one on a branch it has not reached yet (a gas generator's valve, say, still opening while the main line
+                // fills), does not slow the liquid elsewhere
+                let front = n.front;
+                let open = n
+                    .valves
+                    .iter()
+                    .filter(|&&v| {
+                        let at = self.valves[v].cells.iter().map(|&i| self.phase[i]).fold(f32::MAX, f32::min);
+                        front >= at - 1.0 && front <= at + 2.0
+                    })
+                    .map(|&v| self.valves[v].pos)
+                    .fold(1.0f32, f32::min);
                 let dp = (n.p_up.max(n.p_tank) - st.amb_p).max(0.0);
                 let v = (0.6 * (2.0 * dp / rho).sqrt()).min(st.fill_speed) * open;
                 n.front = (n.front + v / st.dx * dtl).min(n.max_phase + 1.0);

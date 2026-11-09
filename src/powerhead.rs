@@ -27,7 +27,7 @@ const TURB_OVER_PUMP: f32 = 1.2;
 const K_NOZ: f32 = 0.6;
 /// The generator's chamber pressure over the pressure in the nozzle at the wheel (measured on generated powerheads).
 const NOZ_LOSS: f32 = 1.18;
-/// Pressure in the exhaust duct under the last wheel.
+/// Pressure under the last wheel when it exhausts into the open.
 const P_EXH: f32 = 1.5e5;
 /// The generator runs at no more than this share of the lower pump discharge pressure (its injectors need the rest).
 const GG_P_SHARE: f32 = 0.65;
@@ -56,6 +56,7 @@ pub struct PhInput {
     pub tank_p_f: f32,
     pub tank_p_o: f32,
     pub steps: u32, // gas steps per frame (sets how fast a wheel can take gas in, see `expand`)
+    pub p_exh: f32, // pressure the last wheel exhausts into, Pa (open air under the part, or a duct that holds it higher)
 }
 
 impl PhInput {
@@ -72,6 +73,7 @@ impl PhInput {
             tank_p_f: st.tank_p_f,
             tank_p_o: st.tank_p_o,
             steps: st.steps_per_frame,
+            p_exh: P_EXH,
         }
     }
 }
@@ -166,14 +168,14 @@ struct Stage {
 /// A wheel takes its gas from the nozzle cells against it, by the orifice law and never more than the gas in those
 /// cells each frame: in effect the gas goes in no faster than `v_in`, and at these pressures that is what sets the
 /// pressure in the nozzle.
-fn expand(m: f32, t_gg: f32, noz: &[i32], wheels: &[(f32, f32)], rgas: f32, gamma: f32, cell_area: f32, v_in: f32) -> Vec<Stage> {
+fn expand(m: f32, t_gg: f32, noz: &[i32], wheels: &[(f32, f32)], rgas: f32, gamma: f32, cell_area: f32, v_in: f32, p_exh: f32) -> Vec<Stage> {
     let n = wheels.len();
     let cp = gamma * rgas / (gamma - 1.0);
     let k = (gamma - 1.0) / gamma;
     let mut t = vec![t_gg; n];
     let mut out = vec![];
     for _ in 0..6 {
-        let mut p = vec![P_EXH; n + 1];
+        let mut p = vec![p_exh; n + 1];
         for j in (0..n).rev() {
             // m = K A sqrt(2 rho (p_in - p_out)) with rho = p_in / (R T), solved for p_in
             let a = noz[j] as f32 * cell_area;
@@ -340,7 +342,7 @@ pub fn size(i: &PhInput) -> PhSize {
     // (a nozzle can be as wide as a three-stage wheel is long)
     let n_max: Vec<i32> = tcells.iter().map(|&d| block_len(3, d, 0.4)).collect();
     let solve = |noz: &[i32]| -> Option<(f32, Vec<Stage>)> {
-        let ok = |m: f32| expand(m, t_gg, noz, &wheels, p.rgas, g, cell_area, v_in).iter().zip(&loads).all(|(st, &load)| st.power >= POWER_MARGIN * load);
+        let ok = |m: f32| expand(m, t_gg, noz, &wheels, p.rgas, g, cell_area, v_in, i.p_exh).iter().zip(&loads).all(|(st, &load)| st.power >= POWER_MARGIN * load);
         let m_hi = 0.4 * mdot;
         if !ok(m_hi) {
             return None;
@@ -354,7 +356,7 @@ pub fn size(i: &PhInput) -> PhSize {
                 lo = mid;
             }
         }
-        Some((hi, expand(hi, t_gg, noz, &wheels, p.rgas, g, cell_area, v_in)))
+        Some((hi, expand(hi, t_gg, noz, &wheels, p.rgas, g, cell_area, v_in, i.p_exh)))
     };
     let mut cands: Vec<Vec<i32>> = vec![];
     for a in 1..=n_max[0] {
@@ -381,7 +383,7 @@ pub fn size(i: &PhInput) -> PhSize {
     let (gg_mdot, noz, stages) = best.or(over).unwrap_or_else(|| {
         let noz = n_max.clone();
         let m = 0.4 * mdot;
-        let st = expand(m, t_gg, &noz, &wheels, p.rgas, g, cell_area, v_in);
+        let st = expand(m, t_gg, &noz, &wheels, p.rgas, g, cell_area, v_in, i.p_exh);
         (m, noz, st)
     });
     if stages.iter().zip(&loads).any(|(st, &load)| st.power < 1.1 * load) {
@@ -490,6 +492,14 @@ fn carve(b: &mut Board, x0: i32, y0: i32, x1: i32, y1: i32) {
 /// below join up without crossing. The generator taps both pump discharges through the back pipe layer, with a valve
 /// on each feed beside its head.
 pub fn build(s: &PhSize) -> (Clip, Vec<Port>) {
+    build_with(s, false, true)
+}
+
+/// The same, with the generator as a burner block (a machine drawn as a cutaway: head and chamber are the block, the
+/// reducer is its outlet) instead of an injector plate over an open chamber; and, with `ox_valves` false, without the
+/// main and throttle valves in the oxidiser outlet (for an engine that has them at its injector head, where the real
+/// ones are: the oxidiser then has no long dry line to fill before it reaches the injectors).
+pub fn build_with(s: &PhSize, burner: bool, ox_valves: bool) -> (Clip, Vec<Port>) {
     let twin = s.shafts.len() == 2;
     let fp = &s.shafts[0].pumps[0];
     let op = if twin { &s.shafts[1].pumps[0] } else { &s.shafts[0].pumps[1] };
@@ -520,7 +530,8 @@ pub fn build(s: &PhSize) -> (Clip, Vec<Port>) {
     let yg = 3;
     let nf = (wc - n0) / 2; // reducer rows: one cell in from each side per row
     let pump_top = if twin { lo(fp.cells) } else { lo(fp.cells).max(lo(op.cells)) };
-    let cy0 = (yg + 2 + 6 + nf + 2 + lo(d0)).max(10 + pump_top);
+    // (the chamber longer than it is wide, so a burner block reads as pointing down at the wheel)
+    let cy0 = (yg + 2 + 6.max(wc - 1) + nf + 2 + lo(d0)).max(10 + pump_top);
     let ty0 = cy0 - lo(d0); // first wheel's top row
     let hc = ty0 - 2 - nf - (yg + 2); // chamber rows
     let by0 = ty0 + d0 - 1;
@@ -564,7 +575,7 @@ pub fn build(s: &PhSize) -> (Clip, Vec<Port>) {
         steel(&mut b, xt + lt, cy - lo(*dt), xt + lt + 1, cy - lo(*dt) + dt - 1);
     }
     // gas generator: injector head, chamber, reducer and nozzle in a thick steel body on top of the first wheel
-    b.rect(cx0, yg, cx1, yg + 1, c::GG);
+    b.rect(cx0, yg, cx1, yg + 1, if burner { c::BURNER } else { c::GG });
     // its two feeds come up on the back layer and in through a valve each side of the head (the taps are upstream of
     // the main valves: without these the propellants would run through the generator as soon as the tanks are on)
     for (x_in, dir) in [(cx0 - 1, -1), (cx1 + 1, 1)] {
@@ -572,12 +583,16 @@ pub fn build(s: &PhSize) -> (Clip, Vec<Port>) {
         b.rect((x_in + dir).min(x_in + 2 * dir), yg, (x_in + dir).max(x_in + 2 * dir), yg + 1, c::VALVE_X);
         b.rect(x_in + 4 * dir, yg, x_in + 4 * dir, yg + 1, c::JOINT);
     }
-    carve(&mut b, cx0, yg + 2, cx1, yg + 1 + hc);
+    if burner {
+        b.rect(cx0, yg + 2, cx1, yg + 1 + hc, c::BURNER);
+    } else {
+        carve(&mut b, cx0, yg + 2, cx1, yg + 1 + hc);
+    }
     for k in 0..nf {
         carve(&mut b, cx0 + k + 1, yg + 2 + hc + k, cx1 - k - 1, yg + 2 + hc + k);
     }
     carve(&mut b, nx0, ty0 - 2, nx0 + n0 - 1, ty0 - 1);
-    steel(&mut b, cx0 - 3, yg - 2, cx1 + 3, ty0 - 1);
+    steel(&mut b, cx0 - 5, yg - 2, cx1 + 5, ty0 - 1);
     steel(&mut b, xt0 - 2, ty0 - 2, xt0 + l0 + 1, ty0 - 1);
     if twin {
         // between the wheels: collector, reducer, nozzle
@@ -633,8 +648,10 @@ pub fn build(s: &PhSize) -> (Clip, Vec<Port>) {
     }
     stub(&mut b, xom, ob + 1, 0, 1, h - 2 - ob);
     b.rect(xom, ob + 2, xom + 1, ob + 3, c::JOINT);
-    b.rect(xom, ob + 6, xom + 1, ob + 7, c::VALVE_X);
-    b.rect(xom, ob + 10, xom + 1, ob + 10, c::THROTTLE);
+    if ox_valves {
+        b.rect(xom, ob + 6, xom + 1, ob + 7, c::VALVE_X);
+        b.rect(xom, ob + 10, xom + 1, ob + 10, c::THROTTLE);
+    }
     ports.push(Port { name: "oxidiser out (to the injectors)", x: xom, y: h - 1 });
     b.back_rect(xom, ob + 2, xb + 1, ob + 3);
     b.back_rect(xb, yg, xb + 1, ob + 3);

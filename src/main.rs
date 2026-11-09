@@ -3186,6 +3186,41 @@ fn selftest(seconds: f32, shot: Option<String>, args: &[String]) {
     if let Some(path) = args.iter().position(|a| a == "--save").and_then(|p| args.get(p + 1)) {
         std::fs::write(path, w.to_text()).unwrap();
     }
+    // --cellpng FILE: the engine as built (cells, with back-layer pipes dimmed blue and front-layer pipes bright), cropped
+    // to what is drawn, 3 pixels a cell
+    if let Some(path) = args.iter().position(|a| a == "--cellpng").and_then(|p| args.get(p + 1)) {
+        let used: Vec<usize> = (0..world::N).filter(|&i| w.cells[i] != c::EMPTY || w.back[i] != 0 || w.front[i] != 0).collect();
+        let (x0, x1) = (used.iter().map(|&i| i % W).min().unwrap_or(0).saturating_sub(4), (used.iter().map(|&i| i % W).max().unwrap_or(0) + 4).min(W - 1));
+        let (y0, y1) = (used.iter().map(|&i| i / W).min().unwrap_or(0).saturating_sub(4), (used.iter().map(|&i| i / W).max().unwrap_or(0) + 4).min(world::H - 1));
+        let (iw, ih, z) = (x1 - x0 + 1, y1 - y0 + 1, 3usize);
+        let mut data = vec![22u8; iw * z * ih * z * 3];
+        for y in 0..ih * z {
+            for x in 0..iw * z {
+                let i = World::idx(x0 + x / z, y0 + y / z);
+                let mut px = if w.cells[i] != c::EMPTY { c::rgb(w.cells[i]) } else { [22, 22, 22] };
+                if w.back[i] != 0 && w.cells[i] != c::JOINT {
+                    px = [(px[0] as u32 * 2 / 3 + 20) as u8, (px[1] as u32 * 2 / 3 + 40) as u8, (px[2] as u32 * 2 / 3 + 80) as u8];
+                }
+                if w.front[i] != 0 && w.cells[i] != c::JOINT && (x / z + y / z) % 2 == 0 {
+                    px = [235, 235, 255];
+                }
+                data[(y * iw * z + x) * 3..(y * iw * z + x) * 3 + 3].copy_from_slice(&px);
+            }
+        }
+        let mut enc = png::Encoder::new(std::io::BufWriter::new(std::fs::File::create(path).unwrap()), (iw * z) as u32, (ih * z) as u32);
+        enc.set_color(png::ColorType::Rgb);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.write_header().unwrap().write_image_data(&data).unwrap();
+        println!("wrote {path} ({iw} x {ih} cells from {x0},{y0})");
+    }
+    // --probe X Y: the cell types in a 9 x 11 patch round a cell (for chasing a failure the event log names)
+    if let Some(k) = args.iter().position(|a| a == "--probe") {
+        let (px, py): (usize, usize) = (args[k + 1].parse().unwrap(), args[k + 2].parse().unwrap());
+        for y in py - 6..=py + 4 {
+            let row: Vec<String> = (px - 4..=px + 4).map(|x| format!("{:>3}", w.cells[World::idx(x, y)])).collect();
+            println!("probe y={y}: {}", row.join(" "));
+        }
+    }
     let mut frame = 0u32;
     let mut stand = stand::TestStand::default();
     let mut first = true;
@@ -3604,6 +3639,12 @@ fn selftest(seconds: f32, shot: Option<String>, args: &[String]) {
             }
             for n in w.nets.iter().filter(|n| !n.injectors.is_empty()) {
                 println!("   net p{} tank{:.1} head{:.0} up{:.0} pc{:.0} m{:.1} line{:.0} valves{:?} inj{} breaches{} leak{:.2}", n.prop, n.p_tank / 1e5, n.head / 1e5, n.p_up / 1e5, n.pc_f / 1e5, n.m_inj, n.p_line / 1e5, n.valves.iter().map(|&v| w.valves[v].pos).collect::<Vec<_>>(), n.injectors.len(), n.breaches.len(), n.leak);
+            }
+            // --probet X Y: wall temperatures along a row (16 cells from X), with the flow and wetness of any injector there
+            if let Some(k) = args.iter().position(|a| a == "--probet") {
+                let (px, py): (usize, usize) = (args[k + 1].parse().unwrap(), args[k + 2].parse().unwrap());
+                let row: Vec<String> = (px..px + 16).map(|x| format!("{}:{:.0}", w.cells[World::idx(x, py)], rb.state.get(World::idx(x, py)).map_or(0.0, |s| s[3]))).collect();
+                println!("   probet y={py}: {}", row.join(" "));
             }
             let nan = rb.state.iter().filter(|s| !s[0].is_finite() || !s[3].is_finite()).count();
             println!(
