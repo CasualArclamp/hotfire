@@ -572,11 +572,12 @@ impl App {
         inp.axi = st.axi;
         inp.tank_p_f = st.tank_p_f;
         inp.tank_p_o = st.tank_p_o;
+        inp.steps = st.steps_per_frame;
         let mut open = true;
         let mut place = false;
         let mut size_inj = false;
         egui::Window::new("Powerhead maker").open(&mut open).default_width(480.0).show(ctx, |ui| {
-            ui.label(egui::RichText::new("Sizes turbopumps, turbines and a gas generator for your engine and draws them as one part. Both propellants come in on the top edge and leave on the bottom edge through their main and throttle valves; the turbine exhaust leaves at the bottom of the gas channel.").small());
+            ui.label(egui::RichText::new("Sizes turbopumps, turbines and a gas generator for your engine and draws them as one part. The generator's gas goes through a reducer and a nozzle into each turbine wheel. Both propellants come in on the top edge and leave on the bottom edge through their main and throttle valves; the turbine exhaust leaves at the bottom edge too.").small());
             egui::ComboBox::from_label("propellants").selected_text(PROPS[inp.prop].name).show_ui(ui, |ui| {
                 for (k, p) in PROPS.iter().enumerate() {
                     ui.selectable_value(&mut inp.prop, k, p.name);
@@ -609,16 +610,23 @@ impl App {
             ui.label(format!("Propellant flow {:.1} kg/s fuel + {:.1} kg/s oxidiser; pumps deliver {:.0} / {:.0} bar", s.mf, s.mo, s.p_dis_f / 1e5, s.p_dis_o / 1e5));
             for (k, sh) in s.shafts.iter().enumerate() {
                 ui.label(egui::RichText::new(format!(
-                    "Shaft {}: {:.0} rpm ({:.0}% of rated), turbine {:.0} cm x {} stages, u/c0 {:.2} ({:.0}% efficient), {:.2} MW",
+                    "Shaft {}: {:.0} rpm ({:.0}% of rated), turbine {:.0} cm x {} stage{}, {:.2} MW",
                     k + 1,
                     sh.omega * 60.0 / std::f32::consts::TAU,
                     sh.speed_frac * 100.0,
                     sh.turb_cells as f32 * st.dx * 100.0,
                     sh.turb_stages,
-                    sh.u_c0,
-                    sh.eff_t * 100.0,
+                    if sh.turb_stages == 1 { "" } else { "s" },
                     sh.power / 1e6
                 )).strong());
+                ui.label(format!(
+                    "    drive gas: {}-cell nozzle, {:.0} bar down to {:.1} bar across the wheel, u/c0 {:.2} ({:.0}% efficient)",
+                    sh.nozzle,
+                    sh.p_in / 1e5,
+                    sh.p_out / 1e5,
+                    sh.u_c0,
+                    sh.eff_t * 100.0
+                ));
                 for q in &sh.pumps {
                     ui.label(format!(
                         "    {} pump: {:.0} cm x {} stage{}, tip {:.0} m/s, {:.0} bar at {:.1} kg/s, {:.0}% efficient",
@@ -634,8 +642,8 @@ impl App {
                 }
             }
             ui.label(format!(
-                "Gas generator: O/F {:.2}, {:.1} kg/s, orifices {:.2} / {:.2} cm2 at {:.0} bar. Governor {:.0} bar, start cartridge {:.1} MW",
-                s.gg_of, s.gg_mdot, s.gg_area_f, s.gg_area_o, s.gg_p / 1e5, s.feed_p_max / 1e5, s.cartridge_w / 1e6
+                "Gas generator: O/F {:.2}, {:.1} kg/s ({:.1}% of the propellant), orifices {:.2} / {:.2} cm2 at {:.0} bar. Governor {:.0} bar, start cartridge {:.1} MW",
+                s.gg_of, s.gg_mdot, 100.0 * s.gg_mdot / (s.mf + s.mo), s.gg_area_f, s.gg_area_o, s.gg_p / 1e5, s.feed_p_max / 1e5, s.cartridge_w / 1e6
             ));
             for n in &s.notes {
                 ui.label(egui::RichText::new(n).small().color(egui::Color32::from_rgb(230, 190, 90)));
@@ -2915,9 +2923,29 @@ fn selftest(seconds: f32, shot: Option<String>, args: &[String]) {
         inp.layout = layout;
         inp.throat_cells = num(4, 14.0);
         let s = powerhead::demo_engine(&mut w, &inp);
+        // --phpng FILE: the generated part on its own, as the maker's window shows it, 6 pixels a cell
+        if let Some(path) = args.iter().position(|a| a == "--phpng").and_then(|p| args.get(p + 1)) {
+            let img = clip_image(&powerhead::build(&s).0);
+            let (iw, ih, z) = (img.size[0], img.size[1], 6usize);
+            let mut data = vec![22u8; iw * z * ih * z * 3];
+            for y in 0..ih * z {
+                for x in 0..iw * z {
+                    let px = img.pixels[(y / z) * iw + x / z];
+                    let a = px.a() as u32;
+                    for (k, v) in [px.r(), px.g(), px.b()].into_iter().enumerate() {
+                        data[(y * iw * z + x) * 3 + k] = ((v as u32 * a + 22 * (255 - a)) / 255) as u8;
+                    }
+                }
+            }
+            let mut enc = png::Encoder::new(std::io::BufWriter::new(std::fs::File::create(path).unwrap()), (iw * z) as u32, (ih * z) as u32);
+            enc.set_color(png::ColorType::Rgb);
+            enc.set_depth(png::BitDepth::Eight);
+            enc.write_header().unwrap().write_image_data(&data).unwrap();
+            println!("wrote {path} ({iw} x {ih} cells)");
+        }
         for (k, sh) in s.shafts.iter().enumerate() {
             let pumps: Vec<String> = sh.pumps.iter().map(|q| format!("{} {}cm x{} tip {:.0} head {:.0}bar flow x{:.2} eff {:.0}% {:.2}MW", if q.prop == 0 { "F" } else { "O" }, q.cells, q.stages, q.tip, q.head / 1e5, q.flow_ratio, q.eff * 100.0, q.power / 1e6)).collect();
-            println!("ph shaft {k}: {:.0} rpm ({:.0}% rated) turbine {}cm x{} u/c0 {:.2} {:.2}MW  {:?}", sh.omega * 60.0 / (2.0 * std::f32::consts::PI), sh.speed_frac * 100.0, sh.turb_cells, sh.turb_stages, sh.u_c0, sh.power / 1e6, pumps);
+            println!("ph shaft {k}: {:.0} rpm ({:.0}% rated) turbine {}x{} cells x{} nozzle {} cells {:.1} -> {:.1} bar u/c0 {:.2} eff {:.0}% {:.2}MW  {:?}", sh.omega * 60.0 / (2.0 * std::f32::consts::PI), sh.speed_frac * 100.0, sh.turb_cells, sh.turb_len, sh.turb_stages, sh.nozzle, sh.p_in / 1e5, sh.p_out / 1e5, sh.u_c0, sh.eff_t * 100.0, sh.power / 1e6, pumps);
         }
         println!("ph: {} at {:.0} bar: {:.1}+{:.1} kg/s, discharge {:.0}/{:.0} bar, gg O/F {:.2} {:.1} kg/s areas {:.2}/{:.2} cm2 p {:.0} bar, governor {:.0} bar, cartridge {:.1} MW, inj {:.2}/{:.2}  {:?}", PROPS[inp.prop].name, inp.pc / 1e5, s.mf, s.mo, s.p_dis_f / 1e5, s.p_dis_o / 1e5, s.gg_of, s.gg_mdot, s.gg_area_f, s.gg_area_o, s.gg_p / 1e5, s.feed_p_max / 1e5, s.cartridge_w / 1e6, w.st.inj_area_f, w.st.inj_area_o, s.notes);
     }
@@ -3535,10 +3563,31 @@ fn selftest(seconds: f32, shot: Option<String>, args: &[String]) {
             for (k, s) in w.shafts.iter().enumerate() {
                 let pumps: Vec<String> = s.pumps.iter().map(|p| format!("{}:{:.0}cm x{} tip{:.0} head{:.0}bar eff{:.0}% cav{:.2}{}", if p.prop == 0 { "F" } else { "O" }, p.d * 100.0, p.stages, p.tip(s.omega), p.head / 1e5, p.eff * 100.0, p.cav, if p.wet { "" } else { " DRY" })).collect();
                 println!("   regen{:?} tp{} {:.0}rpm ({:.0}% rated) J={:.2} turb {:.0}cm x{} u/c0={:.2} eta={:.2} P={:.1}/{:.1}MW {:?}", s.regen_nets, k + 1, s.rpm(), s.x() * 100.0, s.j, s.d_turb * 100.0, s.turb_stages, s.u_c0, s.eff_t, s.p_turb / 1e6, s.p_load / 1e6, pumps);
+                if s.gas_driven && rb.valid {
+                    let gamma = w.st.p().gamma;
+                    let avg = |v: &mut dyn Iterator<Item = usize>| {
+                        let (mut sum, mut n) = (0.0f32, 0);
+                        for j in v {
+                            sum += gas_p(rb.state[j], gamma);
+                            n += 1;
+                        }
+                        (sum / n.max(1) as f32 / 1e5, n)
+                    };
+                    let (p_in, n_in) = avg(&mut s.turb_in.iter().copied());
+                    let (p_out, n_out) = avg(&mut s.turb_faces.iter().copied().filter(|j| !s.turb_in.contains(j)));
+                    println!("   drive gas tp{}: in {:.1} bar ({} cells) out {:.1} bar ({} cells), gas power {:.2} MW, c0 {:.0} m/s", k + 1, p_in, n_in, p_out, n_out, s.p_gas / 1e6, s.c0_gas);
+                }
                 if s.motor_cells > 0 {
                     if let Some(cc) = w.circuits.get(s.circuit as usize) {
                         println!("   motor {:.0} kW, battery {:.0}% ({:.0} kW of {:.0})", s.p_motor / 1e3, 100.0 * cc.energy / cc.cap.max(1.0), cc.p_draw / 1e3, cc.p_max / 1e3);
                     }
+                }
+            }
+            for (k, f) in w.gg_faces.iter().enumerate() {
+                if rb.valid && !f.is_empty() {
+                    let p = f.iter().map(|x| gas_p(rb.state[x.1], w.st.p().gamma)).sum::<f32>() / f.len() as f32;
+                    let draw: f32 = w.nets.iter().map(|n| n.gg_draw).sum();
+                    println!("   generator {}: chamber {:.1} bar (set {:.0}), all generators draw {:.2} kg/s", k + 1, p / 1e5, w.st.gg_p / 1e5, draw);
                 }
             }
             for n in w.nets.iter().filter(|n| !n.injectors.is_empty()) {

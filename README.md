@@ -318,11 +318,16 @@ copy target\release\rocket_sandbox.exe hotfire\Hotfire.exe
     temperature. It works out the propellant flow, the pressure each pump must deliver, and from the same pump
     and turbine models the simulation runs: impeller sizes and stages, shaft speeds, turbine wheels, and the
     gas generator's mixture and orifices.
+  - The turbine wheels are sized to their pumps (at most a fifth wider). The generator's chamber narrows
+    through a **reducer** to a **nozzle** a few cells wide into the top of the wheel, inside a steel casing, and
+    that nozzle is what holds the gas at pressure: the generator runs at tens of bar and a few percent of the
+    propellant does the work. With two shafts the gas goes on from the first wheel through a second nozzle into
+    the other. The window shows each nozzle's width and the pressure either side of its wheel.
   - **Auto** gives liquid hydrogen its own shaft. It is 16 times lighter than LOX, so its pump needs 4 times
     the tip speed for the same pressure. Denser fuels share one shaft with the oxidiser pump.
   - Both propellants come in on the top edge and leave on the bottom edge through a main valve and a throttle
     valve, so tanks above and a chamber below join up without crossing. The turbine exhaust leaves at the
-    bottom of its gas channel. The generator taps both pump outlets through the back pipe layer.
+    bottom edge, under the last wheel. The generator taps both pump outlets through the back pipe layer.
   - **Place powerhead** puts it on the cursor and sets the gas generator orifices, the pump governor, the start
     cartridge and the mixture control. Once it's piped up, **Size injectors for it** sizes the injectors for
     the chosen chamber pressure.
