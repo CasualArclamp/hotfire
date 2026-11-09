@@ -492,7 +492,7 @@ impl App {
     fn apply(&mut self, i: usize, v: u8) {
         // replace mode: only change what's already there (a part on the layer being painted), never fill empty space
         if self.replace && v != c::EMPTY && !matches!(v, TOOL_GAS | TOOL_FUEL | TOOL_FIRE) {
-            let there = if self.layer != 0 && v == c::PIPE { self.world.layer_cell(self.layer, i) } else { self.world.cells[i] };
+            let there = if self.layer != 0 && matches!(v, c::PIPE | c::GASOUT) { self.world.layer_cell(self.layer, i) } else { self.world.cells[i] };
             if there == c::EMPTY {
                 return;
             }
@@ -514,7 +514,8 @@ impl App {
                     self.world.paint_gas(i, 3);
                 }
             }
-            v if self.layer != 0 && v == c::PIPE => self.world.set_layer_cell(self.layer, i, v),
+            v if self.layer != 0 && matches!(v, c::PIPE | c::GASOUT) => self.world.set_layer_cell(self.layer, i, v),
+            c::GASOUT => {} // (a gas outlet only goes on the back or front layer)
             c::EMPTY => self.world.paint_gas(i, 3), // erase walls and any painted gas, fuel or fire
             v if c::auto_walls(v) => {
                 if v == c::HE_TANK {
@@ -534,7 +535,7 @@ impl App {
             return 0;
         }
         // layer pipes only go on the back/front layers; everything else is in the engine plane
-        let layer = if self.layer != 0 && (v == c::PIPE || v == c::EMPTY) { self.layer } else { 0 };
+        let layer = if self.layer != 0 && matches!(v, c::PIPE | c::GASOUT | c::EMPTY) { self.layer } else { 0 };
         let start = World::idx(cx as usize, cy as usize);
         let target = self.world.layer_cell(layer, start);
         let gas_tool = matches!(v, TOOL_GAS | TOOL_FUEL | TOOL_FIRE);
@@ -863,7 +864,7 @@ impl App {
             };
             let groups: [(&str, &[u8]); 5] = [
                 ("Structure", &[c::STEEL, c::COPPER, c::CERAMIC, c::NIOBIUM]),
-                ("Plumbing", &[c::PIPE, c::VALVE, c::THROTTLE, c::JOINT, c::REG, c::INJ, c::AINJ, c::HGI]),
+                ("Plumbing", &[c::PIPE, c::VALVE, c::THROTTLE, c::JOINT, c::REG, c::INJ, c::AINJ, c::HGI, c::GASOUT]),
                 ("Tanks and bottles", &[c::TANK_F, c::TANK_O, c::HE_TANK]),
                 ("Turbopumps and gas generators", &[c::PUMP, c::TURBINE, c::SHAFT, c::GG, c::BURNER, c::CARTRIDGE, c::TEATEB]),
                 ("Electric pumps", &[c::MOTOR, c::BATTERY, c::WIRE]),
@@ -3653,6 +3654,10 @@ fn selftest(seconds: f32, shot: Option<String>, args: &[String]) {
                         println!("   motor {:.0} kW, battery {:.0}% ({:.0} kW of {:.0})", s.p_motor / 1e3, 100.0 * cc.energy / cc.cap.max(1.0), cc.p_draw / 1e3, cc.p_max / 1e3);
                     }
                 }
+            }
+            for (ends, outs) in &w.gas_outlets {
+                let avg = |v: &Vec<usize>| v.iter().map(|&j| gas_p(rb.state[j], w.st.p().gamma)).sum::<f32>() / v.len().max(1) as f32 / 1e5;
+                println!("   gas outlet line: {} intake cells at {:.1} bar, {} outlet cells at {:.1} bar", ends.len(), avg(ends), outs.len(), avg(outs));
             }
             for (k, f) in w.gg_faces.iter().enumerate() {
                 if rb.valid && !f.is_empty() {

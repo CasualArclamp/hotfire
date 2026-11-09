@@ -141,8 +141,8 @@ impl World {
         let cells = &self.cells;
         let conducts = |l: usize, i: usize| match l {
             0 => c::plumbing(cells[i]) || cells[i] == c::VALVE_X,
-            1 => self.back[i] == c::PIPE,
-            _ => self.front[i] == c::PIPE,
+            1 => matches!(self.back[i], c::PIPE | c::GASOUT),
+            _ => matches!(self.front[i], c::PIPE | c::GASOUT),
         };
         let mut seen = vec![false; 3 * N];
         let mut out = vec![];
@@ -487,7 +487,7 @@ impl World {
             if g.is_empty() {
                 return Ok(vec![0; N]);
             }
-            if g.len() != N || g.iter().any(|&v| !matches!(v, c::EMPTY | c::PIPE)) {
+            if g.len() != N || g.iter().any(|&v| !matches!(v, c::EMPTY | c::PIPE | c::GASOUT)) {
                 return Err("bad pipe layer".into());
             }
             Ok(g)
@@ -635,7 +635,7 @@ impl Clip {
         }
         let [cells, back, front, _, fluid] = grids;
         let fluid = if fluid.len() == n { fluid } else { vec![0; n] };
-        let layer = |g: Vec<u8>| if g.len() == n && g.iter().all(|&v| matches!(v, c::EMPTY | c::PIPE)) { g } else { vec![0; n] };
+        let layer = |g: Vec<u8>| if g.len() == n && g.iter().all(|&v| matches!(v, c::EMPTY | c::PIPE | c::GASOUT)) { g } else { vec![0; n] };
         let mut reg_p = vec![0.0; n];
         for (i, p) in regs {
             if i < n {
@@ -703,11 +703,11 @@ impl World {
                 self.reg_p[i] = if v == c::REG { clip.reg_p[k] } else { 0.0 };
                 self.fluid[i] = clip.fluid[k];
             }
-            if clip.back[k] == c::PIPE {
-                self.set_layer_cell(1, i, c::PIPE);
+            if matches!(clip.back[k], c::PIPE | c::GASOUT) {
+                self.set_layer_cell(1, i, clip.back[k]);
             }
-            if clip.front[k] == c::PIPE {
-                self.set_layer_cell(2, i, c::PIPE);
+            if matches!(clip.front[k], c::PIPE | c::GASOUT) {
+                self.set_layer_cell(2, i, clip.front[k]);
             }
         }
         self.nets_dirty = true;
@@ -1181,7 +1181,8 @@ he_setpoint 2500000
             let mut w = World::new();
             w.load_preset(k);
             w.rebuild_nets();
-            let b: usize = w.nets.iter().map(|n| n.breaches.len()).sum();
+            // (a gas line's open end is its intake, not a leak: the nozzle-dump engine's exhaust collector)
+            let b: usize = w.nets.iter().filter(|n| n.prop != 255).map(|n| n.breaches.len()).sum();
             assert_eq!(b + w.he_breaches.len(), 0, "preset {k} must be sealed");
         }
         let (ox, oy) = (crate::presets::PRESET_OX, crate::presets::PRESET_OY);
@@ -1485,6 +1486,41 @@ he_setpoint 2500000
         // pasting off the edge is clipped, not a crash
         w.paste(&s, W as i32 - 10, H as i32 - 10);
         w.paste(&s, -1000, -1000);
+    }
+
+    #[test]
+    fn gas_outlets_on_a_layer_let_a_gas_line_out_into_the_engine_plane() {
+        let mut w = World::new();
+        w.clear();
+        // a steel box with a pipe joint in its wall, a back-layer line from the joint out to open space, the last of it outlets
+        w.rect(300, 300, 320, 320, c::STEEL);
+        w.rect(302, 302, 318, 318, c::EMPTY);
+        w.set_cell(World::idx(319, 310), c::JOINT);
+        for x in 319..=350 {
+            w.set_layer_cell(1, World::idx(x, 310), if x >= 340 { c::GASOUT } else { c::PIPE });
+        }
+        w.rebuild_nets();
+        assert_eq!(w.gas_outlets.len(), 1);
+        let (ends, outs) = &w.gas_outlets[0];
+        assert_eq!(ends, &vec![World::idx(318, 310)], "the gas comes in from the box, at the joint");
+        assert_eq!(outs.len(), 11, "and leaves in front of every outlet cell");
+        assert!(outs.iter().all(|&j| w.cells[j] == c::EMPTY && j / W == 310 && (340..=350).contains(&(j % W))));
+        // an outlet behind a wall lets nothing out there; one on the engine plane is refused
+        w.set_cell(World::idx(345, 310), c::STEEL);
+        w.rebuild_nets();
+        assert_eq!(w.gas_outlets[0].1.len(), 10);
+        // saved and loaded with the design
+        let text = w.to_text();
+        let mut w2 = World::new();
+        w2.from_text(&text).unwrap();
+        assert_eq!(w2.back[World::idx(342, 310)], c::GASOUT);
+        w2.rebuild_nets();
+        assert_eq!(w2.gas_outlets.len(), 1);
+        // the nozzle-dump engine takes its turbine exhaust into the skirt this way
+        w.load_preset(4);
+        w.rebuild_nets();
+        assert_eq!(w.gas_outlets.len(), 1);
+        assert!(w.gas_outlets[0].1.len() > 40 && w.gas_outlets[0].0.len() > 30);
     }
 
     #[test]

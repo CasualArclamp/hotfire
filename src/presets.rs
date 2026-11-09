@@ -72,14 +72,12 @@ pub struct Feeds {
     pub ox: i32,
     pub he_tap: Option<i32>,
     pub top: i32, // the inlet pipes start on this row, and nothing of the engine is above it under the tank stack
+    pub outlets: Vec<Rect>, // gas outlets to put on the back layer (over the back pipes already listed)
+    pub reopen: Vec<Rect>,  // gas cells to open again once the plumbing has been walled in (the intake of a gas line)
 }
 
 type Rect = (i32, i32, i32, i32);
 
-/// Back pressure of the exhaust duct into a nozzle extension, per kg/s of turbine gas (at 1 cm cells, 36 cm deep).
-const DUCT_PA_PER_KG_S: f32 = 0.3e5;
-/// Width of the gap the turbine exhaust enters a nozzle extension through, cells.
-const DUMP_GAP: i32 = 10;
 
 pub fn presets() -> Vec<EngineSpec> {
     let hydrolox = EngineSpec {
@@ -1051,14 +1049,8 @@ impl World {
             steps: self.st.steps_per_frame,
             p_exh: 1.5e5,
         };
-        let mut s = size(&inp);
-        if e.gg_dump == 1 {
-            // the duct into the nozzle holds the last wheel's outlet well above the open air, the more gas the higher
-            // (about 0.35 bar for each kg/s, measured): size the powerhead for the pressure its own gas makes
-            for _ in 0..6 {
-                s = size(&PhInput { p_exh: (1.5e5f32).max(DUCT_PA_PER_KG_S * s.gg_mdot * (0.36 / e.depth) * (DX0 / e.dx)), ..inp });
-            }
-        }
+        // (exhaust into the nozzle: the last wheel exhausts against its collector, a few bar)
+        let s = size(&PhInput { p_exh: if e.gg_dump == 1 { 3.0e5 } else { 1.5e5 }, ..inp });
         let (clip, ports) = build_with(&s, e.burner, false);
         let port = |name: &str| ports.iter().find(|p| p.name.starts_with(name)).map(|p| p.x).unwrap();
         let (pw, ph) = (clip.w as i32, clip.h as i32);
@@ -1108,7 +1100,7 @@ impl World {
         let xf = px + port("fuel out");
         self.rect(xf, yb, xf + 1, yb + 1, c::JOINT);
         let ey = e.exit_y as i32;
-        let yf = if e.gg_dump == 1 { ey - 16 } else { ey - 3 }; // (above the exhaust plenum at the rim)
+        let yf = ey - 3;
         let h = hw(yf as f32 + 0.5);
         let tx = (cx - (h + e.liner + e.jacket * 0.5)).floor() as i32; // outer jacket column on the left
         let mt = 255 - tx;
@@ -1124,31 +1116,31 @@ impl World {
         back.push((col, yb + 8, col + 1, yf + 1));
         back.push((lj, yf, col + 1, yf + 1));
         if e.gg_dump == 1 {
-            // exhaust into the nozzle: the part's outlet narrows to a duct sixteen cells wide, straight down beside the bell to a
-            // plenum against its rim, and out through a gap between the rim and a wider, radiation-cooled niobium extension:
-            // the gas goes in along the extension's wall, facing downstream (a slot facing across the stream would have the
-            // main jet's ram pressure, a quarter of the chamber's, backing up the turbines)
+            // exhaust into the nozzle: a plate of pipe joints closes the duct under the last wheel and takes its gas into a
+            // line on the back layer, down beside the bell and across behind the top of a radiation-cooled niobium skirt. Along
+            // the inside of the skirt's wall on both sides the line is gas outlets: the exhaust comes out into the stream there,
+            // moving with it, and lines the wall (nothing sticks into the jet, so nothing backs the turbines up)
             let ll = s.shafts.last().map_or(8, |sh| sh.turb_len);
-            let (e0, e1) = (px + ex, px + ex + 9);
-            let r_out = (e.exit_hw + l3).ceil() as i32; // the bell's outer radius at its exit
-            let xr = 128 + r_out; // first column right of the rim
-            fill_empty(self, px + ex - 1, yb + 1, px + ex + ll, yb + 2, c::STEEL);
-            fill_empty(self, e0 - 2, yb + 1, e1 + 2, ey + 1, c::STEEL);
-            fill_empty(self, xr, ey - 10, e1 + 2, ey + 1, c::STEEL);
-            // (seal the sliver between the flaring bell and the plenum)
-            for y in ey - 10..ey {
-                for x in 128..xr {
-                    if x as f32 + 0.5 - cx >= hw(y as f32 + 0.5) + l3 {
-                        fill_empty(self, x, y, x, y, c::STEEL);
-                    }
+            let e0 = px + ex;
+            // (the collector: the duct carried on down ten rows, its sides and bottom all joints, so the line has plenty of
+            // cells to draw the gas from and holds no pressure against the wheel)
+            self.rect(e0 - 1, yb - 4, e0 - 1, yb + 11, c::JOINT);
+            self.rect(e0 + ll, yb - 4, e0 + ll, yb + 11, c::JOINT);
+            self.rect(e0 - 1, yb + 11, e0 + ll, yb + 11, c::JOINT);
+            fill_empty(self, e0 - 2, yb - 5, e0 - 1, yb + 12, c::STEEL);
+            fill_empty(self, e0 + ll, yb - 5, e0 + ll + 1, yb + 12, c::STEEL);
+            fill_empty(self, e0 - 2, yb + 11, e0 + ll + 1, yb + 12, c::STEEL);
+            for y in yb + 1..=yb + 10 {
+                for x in e0..e0 + ll {
+                    self.cells[World::idx(x as usize, y as usize)] = c::EMPTY;
                 }
             }
-            fill_empty(self, 128 - r_out - DUMP_GAP - 2, ey - 1, 128 - r_out - 1, ey, c::STEEL); // the left of the gap is capped
+            feeds.reopen.push((e0, yb - 4, e0 + ll - 1, yb + 10));
             let ext = crate::design::NozzleSpec {
                 cx,
                 y_throat: ey + 1,
                 y_exit: ey + 91,
-                throat_hw: (r_out + DUMP_GAP) as f32,
+                throat_hw: e.exit_hw,
                 expansion: 1.4,
                 contour: crate::design::Contour::Bell,
                 liner: 1,
@@ -1158,9 +1150,15 @@ impl World {
                 liner_mat: c::NIOBIUM,
             };
             self.build_nozzle(&ext);
-            self.rect(e0, yb + 1, e1, ey - 1, c::EMPTY);
-            self.rect(xr, ey - 8, e1, ey - 1, c::EMPTY);
-            self.rect(xr, ey, xr + DUMP_GAP - 1, ey, c::EMPTY);
+            let (wl, wr) = (128 - e.exit_hw as i32, 127 + e.exit_hw as i32); // the skirt's first and last gas columns at its top
+            back.push((e0, yb + 11, e0 + 1, ey + 4));
+            back.push((wl, ey + 3, e0 + 1, ey + 4));
+            feeds.outlets.push((wl, ey + 3, wl + 9, ey + 4));
+            feeds.outlets.push((wr - 9, ey + 3, wr, ey + 4));
+            back.push((wl, ey + 5, wl + 1, ey + 16));
+            back.push((wr - 1, ey + 5, wr, ey + 16));
+            feeds.outlets.push((wl, ey + 5, wl + 1, ey + 16));
+            feeds.outlets.push((wr - 1, ey + 5, wr, ey + 16));
         }
         let _ = pw;
         (back, s)
@@ -2198,7 +2196,7 @@ impl World {
                     self.cells[World::idx(x, y)] = if y >= dy as usize { self.cells[World::idx(x, y - dy as usize)] } else { c::EMPTY };
                 }
             }
-            for r in back.iter_mut().chain(front.iter_mut()) {
+            for r in back.iter_mut().chain(front.iter_mut()).chain(feeds.outlets.iter_mut()).chain(feeds.reopen.iter_mut()) {
                 r.1 += dy;
                 r.3 += dy;
             }
@@ -2217,6 +2215,13 @@ impl World {
                     for x in x0..=x1 {
                         self.set_layer_cell(layer, World::idx(x as usize + PRESET_OX, y as usize + PRESET_OY), c::PIPE);
                     }
+                }
+            }
+        }
+        for &(x0, y0, x1, y1) in &feeds.outlets {
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    self.set_layer_cell(1, World::idx(x as usize + PRESET_OX, y as usize + PRESET_OY), c::GASOUT);
                 }
             }
         }
@@ -2241,6 +2246,13 @@ impl World {
             self.st.mix_target = 1.8; // (held with the throttle valves in both main lines)
         }
         self.auto_wall_all();
+        for &(x0, y0, x1, y1) in &feeds.reopen {
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    self.cells[World::idx(x as usize + PRESET_OX, y as usize + PRESET_OY)] = c::EMPTY;
+                }
+            }
+        }
         self.dirty.clear();
         self.nets_dirty = true;
         match e.inj {

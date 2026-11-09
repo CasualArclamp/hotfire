@@ -307,6 +307,11 @@ fn layer_pipe(l: u32, i: u32, ix: u32, iy: u32, cf: vec2<f32>) -> vec4<f32> {
     if ((ix + 1u >= r.w || layer_type(l, i + 1u) == 0u) && fr.x > 1.0 - wth) { col = OUTLINE; }
     if ((iy == 0u || layer_type(l, i - r.w) == 0u) && fr.y < wth) { col = OUTLINE; }
     if ((iy + 1u >= r.h || layer_type(l, i + r.w) == 0u) && fr.y > 1.0 - wth) { col = OUTLINE; }
+    if (t == 35u) {
+        // a gas outlet: a perforated stretch of the line
+        let d = length(fr - vec2<f32>(0.5, 0.5));
+        col = mix(vec3<f32>(0.92, 0.59, 0.35), vec3<f32>(0.12, 0.10, 0.10), smoothstep(0.26, 0.2, d));
+    }
     if ((mat[i] & 255u) == 20u) {
         let d = length(fr - vec2<f32>(0.5, 0.5));
         if (d > 0.16 && d < 0.32) { col = vec3<f32>(0.95, 0.95, 0.7); }

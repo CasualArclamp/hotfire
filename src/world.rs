@@ -271,7 +271,11 @@ pub mod c {
     /// Alternating injector: touch a fuel line and an oxidiser line and it sprays fuel from every other cell and oxidiser from
     /// the cells between (checkerboard by position), into whatever open gas it faces: one part, no separate manifolds.
     pub const AINJ: u8 = 34;
-    pub const COUNT: u8 = 35;
+    /// Gas outlet, on the back or front pipe layer only: a stretch of a gas line that lets its gas out into the open
+    /// cells of the engine plane it passes, moving with whatever is flowing there (turbine exhaust laid along the inside
+    /// of a nozzle skirt, say), so nothing has to stick into the stream.
+    pub const GASOUT: u8 = 35;
+    pub const COUNT: u8 = 36;
 
     /// Ids retired when plumbing stopped being fuel- or oxidiser-specific (old saves load as generic parts).
     pub fn canon(t: u8) -> u8 {
@@ -299,6 +303,7 @@ pub mod c {
             INJ => "Injector (opens into the chamber)",
             GG => "Gas generator (touch a fuel pipe and an oxidiser pipe)",
             AINJ => "Alternating injector (touch a fuel pipe and an oxidiser pipe: fuel and oxidiser from alternate cells)",
+            GASOUT => "Gas outlet (Back or Front layer: part of a gas line; lets its gas out into the open space in front of it, along the flow)",
             HE_TANK => "Helium bottle (pressurant)",
             TURBINE => "Turbine (diameter sets blade speed, area its gas share)",
             SHAFT => "Shaft (links turbine and pumps)",
@@ -369,6 +374,7 @@ pub mod c {
             INJ => [180, 215, 255],
             GG => [240, 230, 80],
             AINJ => [200, 190, 235],
+            GASOUT => [235, 150, 90],
             HE_TANK => [225, 225, 235],
             TURBINE => [230, 140, 60],
             SHAFT => [90, 90, 100],
@@ -544,6 +550,7 @@ pub struct Net {
     pub flow_off: f32, // animation phase of the liquid in the lines
     pub valve_prev: f32, // valve opening last step (water hammer needs a closing valve)
     pub breaches: Vec<(usize, usize)>, // (container cell, open gas cell it spills into)
+    pub outlets: Vec<usize>,           // open cells of the engine plane in front of the gas outlets on this line (back / front layer)
     pub leak: f32,       // kg/s escaping through breaches
     pub ull_pv: f32,     // ullage gas content p*V (J): boil-off adds to it, draining expands the space
     pub boil: f32,       // kg/s boiling off
@@ -1011,6 +1018,7 @@ pub struct World {
     pub thrust_f: f32,          // thrust averaged over ~0.5 s, as a test-stand load cell reads it
     pub open_gas: Vec<bool>, // gas connected to the edge of the world (chamber, nozzle, plume, vents)
     pub gas_pipes: Vec<Vec<usize>>, // pipework with no tank or bottle that opens onto gas: the open cells at its ends
+    pub gas_outlets: Vec<(Vec<usize>, Vec<usize>)>, // gas lines with outlets: (open cells at their ends, open cells in front of their outlets)
     pub hgi_down: Vec<Vec<usize>>,  // ... and those on its outlet side (opening into a big space): it only flows into them
     pub gg_comb: f32,
     pub burner_view: Vec<(f32, bool)>, // per drawn block (burners): the outlet end (+1 / -1 along the long axis) and whether the fuel line is on the low side; known from the layout, not from the generator list (which is empty while the feed valves are shut)
@@ -1117,6 +1125,7 @@ impl World {
             hgi_faces: vec![],
             hgi_down: vec![],
             gas_pipes: vec![],
+            gas_outlets: vec![],
             open_gas: vec![true; N],
             thrust_f: 0.0,
             reg_p: vec![0.0; N],
@@ -1705,7 +1714,9 @@ impl World {
         let lt = |l: usize, i: usize| -> u8 {
             match l {
                 0 => cells[i],
+                1 if back[i] == c::GASOUT => c::PIPE, // (an outlet is a stretch of pipe)
                 1 => back[i],
+                _ if front[i] == c::GASOUT => c::PIPE,
                 _ => front[i],
             }
         };
@@ -1959,7 +1970,9 @@ impl World {
         let lt = |l: usize, i: usize| -> u8 {
             match l {
                 0 => cells[i],
+                1 if back[i] == c::GASOUT => c::PIPE, // (an outlet is a stretch of pipe)
                 1 => back[i],
+                _ if front[i] == c::GASOUT => c::PIPE,
                 _ => front[i],
             }
         };
@@ -2069,6 +2082,7 @@ impl World {
                 flow_off: 0.0,
                 valve_prev: 1.0,
                 breaches: vec![],
+                outlets: vec![],
                 leak: 0.0,
                 ull_pv: 0.0,
                 boil: 0.0,
@@ -2091,6 +2105,9 @@ impl World {
                 if l > 0 {
                     self.layer_net[l - 1][i] = id;
                     layer_lines += 1;
+                    if (if l == 1 { back[i] } else { front[i] }) == c::GASOUT && cells[i] == c::EMPTY && !net.outlets.contains(&i) {
+                        net.outlets.push(i);
+                    }
                     continue;
                 }
                 self.net_of[i] = id;
@@ -2894,6 +2911,19 @@ impl World {
                 f
             })
             .collect();
+        // gas lines with outlets: what comes in at their open ends leaves through the outlets
+        self.gas_outlets = self
+            .nets
+            .iter()
+            .filter(|n| n.prop == 255 && !n.outlets.is_empty() && !n.breaches.is_empty())
+            .map(|n| {
+                let mut f: Vec<usize> = n.breaches.iter().map(|b| b.1).filter(|j| !n.outlets.contains(j)).collect();
+                f.sort_unstable();
+                f.dedup();
+                (f, n.outlets.clone())
+            })
+            .filter(|(f, _)| !f.is_empty())
+            .collect();
         let mut pipe_of = std::collections::HashMap::new();
         for (k, faces) in self.gas_pipes.iter().enumerate() {
             for &j in faces {
@@ -3033,7 +3063,7 @@ impl World {
     }
 
     pub fn set_layer_cell(&mut self, layer: u8, i: usize, v: u8) {
-        if !matches!(v, c::EMPTY | c::PIPE) {
+        if !matches!(v, c::EMPTY | c::PIPE | c::GASOUT) {
             return;
         }
         let arr = if layer == 1 { &mut self.back } else { &mut self.front };
@@ -4509,6 +4539,37 @@ impl World {
             for faces in &self.gas_pipes {
                 if let Some(t) = through_flow(faces, rb, &st, pr.gamma, 0.5) {
                     apply_through(&mut map, &t, t.h_h, 0.0, rb, &st);
+                }
+            }
+        }
+        // gas outlets: one way, from the open ends of the line to the cells in front of its outlets, where the gas joins
+        // whatever is flowing there, going the same way (at rest, it just arrives).
+        if rb.valid {
+            for (ends, outs) in &self.gas_outlets {
+                if let Some(t) = flow_between(ends.clone(), outs.clone(), rb, &st, pr.gamma, 0.9) {
+                    for &j in &t.hi {
+                        let s0 = rb.state[j];
+                        let dm = t.m / t.hi.len() as f32 * st.dt() / (st.dx * st.dx * st.depth_at(j % W));
+                        let r0 = s0[0].max(1e-4);
+                        let s = map.entry(j).or_insert(Src { cell: j as u32, ..Default::default() });
+                        s.drho -= dm;
+                        s.dmx -= dm * s0[1] / r0;
+                        s.dmy -= dm * s0[2] / r0;
+                        s.de -= dm * (s0[3] + gas_p(s0, pr.gamma)) / r0;
+                    }
+                    for &j in &t.lo {
+                        let s0 = rb.state[j];
+                        let dm = t.m / t.lo.len() as f32 * st.dt() / (st.dx * st.dx * st.depth_at(j % W));
+                        let r0 = s0[0].max(1e-4);
+                        let (u, v) = (s0[1] / r0, s0[2] / r0);
+                        let sp = (u * u + v * v).sqrt();
+                        let k = if sp > 1.0 { sp.min(t.v) / sp } else { 0.0 };
+                        let s = map.entry(j).or_insert(Src { cell: j as u32, ..Default::default() });
+                        s.drho += dm;
+                        s.dmx += dm * u * k;
+                        s.dmy += dm * v * k;
+                        s.de += dm * (t.h_h + 0.5 * (sp * k).powi(2));
+                    }
                 }
             }
         }
