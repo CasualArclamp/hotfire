@@ -141,8 +141,8 @@ impl World {
         let cells = &self.cells;
         let conducts = |l: usize, i: usize| match l {
             0 => c::plumbing(cells[i]) || cells[i] == c::VALVE_X,
-            1 => self.back[i] == c::PIPE,
-            _ => self.front[i] == c::PIPE,
+            1 => matches!(self.back[i], c::PIPE | c::GASOUT),
+            _ => matches!(self.front[i], c::PIPE | c::GASOUT),
         };
         let mut seen = vec![false; 3 * N];
         let mut out = vec![];
@@ -487,7 +487,7 @@ impl World {
             if g.is_empty() {
                 return Ok(vec![0; N]);
             }
-            if g.len() != N || g.iter().any(|&v| !matches!(v, c::EMPTY | c::PIPE)) {
+            if g.len() != N || g.iter().any(|&v| !matches!(v, c::EMPTY | c::PIPE | c::GASOUT)) {
                 return Err("bad pipe layer".into());
             }
             Ok(g)
@@ -635,7 +635,7 @@ impl Clip {
         }
         let [cells, back, front, _, fluid] = grids;
         let fluid = if fluid.len() == n { fluid } else { vec![0; n] };
-        let layer = |g: Vec<u8>| if g.len() == n && g.iter().all(|&v| matches!(v, c::EMPTY | c::PIPE)) { g } else { vec![0; n] };
+        let layer = |g: Vec<u8>| if g.len() == n && g.iter().all(|&v| matches!(v, c::EMPTY | c::PIPE | c::GASOUT)) { g } else { vec![0; n] };
         let mut reg_p = vec![0.0; n];
         for (i, p) in regs {
             if i < n {
@@ -703,11 +703,11 @@ impl World {
                 self.reg_p[i] = if v == c::REG { clip.reg_p[k] } else { 0.0 };
                 self.fluid[i] = clip.fluid[k];
             }
-            if clip.back[k] == c::PIPE {
-                self.set_layer_cell(1, i, c::PIPE);
+            if matches!(clip.back[k], c::PIPE | c::GASOUT) {
+                self.set_layer_cell(1, i, clip.back[k]);
             }
-            if clip.front[k] == c::PIPE {
-                self.set_layer_cell(2, i, c::PIPE);
+            if matches!(clip.front[k], c::PIPE | c::GASOUT) {
+                self.set_layer_cell(2, i, clip.front[k]);
             }
         }
         self.nets_dirty = true;
@@ -1044,6 +1044,8 @@ he_setpoint 2500000
         let mut w = World::new();
         let mut e = crate::presets::presets().into_iter().nth(4).unwrap();
         e.twin_shaft = false; // the classic layout: generator not ducted to the turbines
+        e.stage = false; // (drawn the old way, tanks beside the engine: the generator stands in the open there)
+        e.inj = Some((0.95, 2.2));
         w.build_engine(&e);
         w.st.boil_speed = 0.0; // this plumbing-only harness has no real chamber and sits on a knife edge
         w.st.amb_p = 100.0; // ... so it runs in vacuum (the GPU self-test covers the sea-level start)
@@ -1179,17 +1181,18 @@ he_setpoint 2500000
             let mut w = World::new();
             w.load_preset(k);
             w.rebuild_nets();
-            let b: usize = w.nets.iter().map(|n| n.breaches.len()).sum();
+            // (a gas line's open end is its intake, not a leak: the nozzle-dump engine's exhaust collector)
+            let b: usize = w.nets.iter().filter(|n| n.prop != 255).map(|n| n.breaches.len()).sum();
             assert_eq!(b + w.he_breaches.len(), 0, "preset {k} must be sealed");
         }
         let (ox, oy) = (crate::presets::PRESET_OX, crate::presets::PRESET_OY);
         let mut w = World::new();
         w.load_preset(3);
-        // knock a hole in the wall above the oxidiser tank and beside the helium bank
-        let hole = World::idx(120 + ox, 7 + oy);
+        // knock a hole in the wall above the oxidiser tank (the lower one of the stack) and beside the helium bottle
+        let hole = (20..200).map(|y| World::idx(120 + ox, y + oy)).find(|&i| w.cells[i] == c::STEEL && w.cells[i + W] == c::TANK_O).expect("the oxidiser tank's top wall");
         assert_eq!(w.cells[hole], c::STEEL);
         w.set_cell(hole, c::EMPTY);
-        let he_hole = World::idx(185 + ox, 41 + oy);
+        let he_hole = World::idx(109 + ox, 12 + oy);
         assert_eq!(w.cells[he_hole], c::STEEL);
         w.set_cell(he_hole, c::EMPTY);
         let before = w.nets.iter().filter(|n| n.prop == 1).map(|n| n.mass_frac).fold(0.0, f32::max);
@@ -1486,9 +1489,82 @@ he_setpoint 2500000
     }
 
     #[test]
+    fn gas_outlets_on_a_layer_let_a_gas_line_out_into_the_engine_plane() {
+        let mut w = World::new();
+        w.clear();
+        // a steel box with a pipe joint in its wall, a back-layer line from the joint out to open space, the last of it outlets
+        w.rect(300, 300, 320, 320, c::STEEL);
+        w.rect(302, 302, 318, 318, c::EMPTY);
+        w.set_cell(World::idx(319, 310), c::JOINT);
+        for x in 319..=350 {
+            w.set_layer_cell(1, World::idx(x, 310), if x >= 340 { c::GASOUT } else { c::PIPE });
+        }
+        w.rebuild_nets();
+        assert_eq!(w.gas_outlets.len(), 1);
+        let (ends, outs) = &w.gas_outlets[0];
+        assert_eq!(ends, &vec![World::idx(318, 310)], "the gas comes in from the box, at the joint");
+        assert_eq!(outs.len(), 11, "and leaves in front of every outlet cell");
+        assert!(outs.iter().all(|&j| w.cells[j] == c::EMPTY && j / W == 310 && (340..=350).contains(&(j % W))));
+        // an outlet behind a wall lets nothing out there; one on the engine plane is refused
+        w.set_cell(World::idx(345, 310), c::STEEL);
+        w.rebuild_nets();
+        assert_eq!(w.gas_outlets[0].1.len(), 10);
+        // saved and loaded with the design
+        let text = w.to_text();
+        let mut w2 = World::new();
+        w2.from_text(&text).unwrap();
+        assert_eq!(w2.back[World::idx(342, 310)], c::GASOUT);
+        w2.rebuild_nets();
+        assert_eq!(w2.gas_outlets.len(), 1);
+        // the nozzle-dump engine takes its turbine exhaust into the skirt this way
+        w.load_preset(4);
+        w.rebuild_nets();
+        assert_eq!(w.gas_outlets.len(), 1);
+        assert!(w.gas_outlets[0].1.len() > 40 && w.gas_outlets[0].0.len() > 30);
+    }
+
+    #[test]
+    fn start_lamps_follow_the_sequence() {
+        let mut w = World::new();
+        w.load_preset(2);
+        w.rebuild_nets();
+        let lamp = |w: &World, name: &str| w.start_lamps().into_iter().find(|l| l.0 == name).map(|l| l.1);
+        // at rest: every lamp dark, and the Merlin's starter is its helium spin
+        assert!(w.start_lamps().iter().all(|l| l.1 == 0), "{:?}", w.start_lamps());
+        assert!(lamp(&w, "HELIUM SPIN").is_some() && lamp(&w, "CARTRIDGE").is_none());
+        w.start_sequence();
+        assert_eq!(lamp(&w, "PURGE"), Some(1));
+        assert_eq!(lamp(&w, "PRIME"), Some(0));
+        // purge over: priming, then the ignition part (oxidiser, igniter) with the purge and prime lamps green
+        let mut seen_prime = false;
+        for _ in 0..400 {
+            run(&mut w, 0.016);
+            if lamp(&w, "PRIME") == Some(1) {
+                seen_prime = true;
+                assert_eq!(lamp(&w, "PURGE"), Some(2));
+                assert_eq!(lamp(&w, "OXIDISER"), Some(0));
+            }
+        }
+        assert!(seen_prime);
+        assert_eq!(lamp(&w, "PRIME"), Some(2), "{:?}", w.start_lamps());
+        assert_ne!(lamp(&w, "OXIDISER"), Some(0), "{:?}", w.start_lamps());
+        // lit: the flame lamp green, and the main-stage lamp ramping or done
+        assert!(w.ignited);
+        assert_eq!(lamp(&w, "LIT"), Some(2));
+        assert_eq!(lamp(&w, "IGNITER"), Some(2));
+        assert_ne!(lamp(&w, "MAIN STAGE"), Some(0), "{:?}", w.start_lamps());
+        // a pressure-fed engine has no starter or generator lamp
+        w.load_preset(3);
+        w.rebuild_nets();
+        let names: Vec<&str> = w.start_lamps().iter().map(|l| l.0).collect();
+        assert_eq!(names, ["PURGE", "PRIME", "OXIDISER", "IGNITER", "LIT", "MAIN STAGE"]);
+    }
+
+    #[test]
     fn dead_headed_primed_pumps_churn_instead_of_running_away() {
         let mut w = World::new();
         w.st.governor = false;
+        run(&mut w, 1.0); // (the feed lines fill from the tank stack down to the pumps)
         w.cartridge_t = 30.0; // start cartridge with every valve shut: the pumps are full but nothing flows
         run(&mut w, 8.0);
         assert!(!w.events.iter().any(|e| e.contains("overspeed")), "{:?}", w.events);
@@ -1856,8 +1932,12 @@ he_setpoint 2500000
             assert!(w.gg.is_empty());
             let cell = w.cells.iter().position(|&v| v == c::BURNER).unwrap();
             let (dir, fuel_low) = w.burner_view[w.block_of[cell] as usize];
-            if matches!(k, 1 | 4 | 5) {
+            if k == 5 {
                 assert_eq!((dir, fuel_low), (-1.0, false), "preset {k}");
+            } else {
+                // a powerhead from the maker: the outlet below, onto the turbine, the fuel in on the left
+                assert_eq!((dir, fuel_low), (1.0, true), "preset {k}");
+                assert!(!w.blocks[w.block_of[cell] as usize].horizontal, "preset {k}: the burner points down");
             }
             // its feed valves open at the start: the burner is then joined to both lines
             open_all(&mut w);
@@ -1935,8 +2015,9 @@ he_setpoint 2500000
         w.rebuild_nets();
         assert!(w.shafts.iter().all(|s| s.cart_cells == 0));
         // a cartridge cell on an empty cell next to a turbine cell
-        let t = (0..N).find(|&i| w.cells[i] == c::TURBINE && w.cells[i - 1] == c::EMPTY).expect("a turbine with open space beside it");
-        w.set_cell(t - 1, c::CARTRIDGE);
+        // (the wheel is cased in: the open space against it is its exhaust duct, below)
+        let t = (0..N).find(|&i| w.cells[i] == c::TURBINE && w.cells[i + W] == c::EMPTY).expect("a turbine with open space beside it");
+        w.set_cell(t + W, c::CARTRIDGE);
         w.rebuild_nets();
         assert_eq!(w.shafts.iter().map(|s| s.cart_cells).sum::<usize>(), 1);
     }

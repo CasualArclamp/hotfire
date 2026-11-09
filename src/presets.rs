@@ -58,10 +58,35 @@ pub struct EngineSpec {
     pub tri_inj: f32,    // ... and its injector area, cm2 a cell
     pub burner: bool,    // the gas generator is a burner block (a machine drawn as a cutaway) instead of an injector plate
     pub plug: bool,      // a linear aerospike (plug nozzle): two slot chambers either side of a central spike, instead of a bell
+    pub stage: bool,     // laid out like a stage: both tanks and the helium bottle stacked on the centre line above the engine
+    pub ox_top: bool,    // ... with the oxidiser tank the upper one (kerosene stages; hydrogen stages carry the fuel on top)
+    pub mix: f32,        // mixture ratio the throttle valves hold (0: the layout's own rule)
+    pub t_gg: f32,       // turbine drive gas temperature the powerhead maker sizes the generator for, K
+    pub tapoff: bool,    // tap-off cycle: no generator, the turbine runs on hot gas ducted from the main chamber
 }
+
+/// Where a layout wants its propellants delivered: the columns (two cells wide) of its fuel and oxidiser inlet pipes at
+/// the top row of the engine's part of the frame, and a column for a helium line if it has a tank of its own to pressurise.
+#[derive(Default)]
+pub struct Feeds {
+    pub fuel: i32,
+    pub ox: i32,
+    pub he_tap: Option<i32>,
+    pub top: i32, // the inlet pipes start on this row, and nothing of the engine is above it under the tank stack
+    pub outlets: Vec<Rect>, // gas outlets to put on the back layer (over the back pipes already listed)
+    pub reopen: Vec<Rect>,  // gas cells to open again once the plumbing has been walled in (the intake of a gas line)
+}
+
+type Rect = (i32, i32, i32, i32);
+
 
 pub fn presets() -> Vec<EngineSpec> {
     let hydrolox = EngineSpec {
+        stage: true,
+        ox_top: false,
+        mix: 0.0,
+        t_gg: 1000.0,
+        tapoff: false,
         name: "Hydrolox expander",
         blurb: "LH2/LOX, regen jacket heat drives two turbopumps (RL10 / RS-25 style), big vacuum bell",
         prop: 0,
@@ -78,7 +103,7 @@ pub fn presets() -> Vec<EngineSpec> {
         jacket: 2.0,
         shell: 2.0,
         fuel_tp: Some(TpSpec { pump_d: 24, stages: 2, turb_d: 24, turb_l: 20 }), // two-stage turbine: the hydrogen pump needs most of the power
-        ox_tp: Some(TpSpec { pump_d: 22, stages: 1, turb_d: 32, turb_l: 3 }),
+        ox_tp: Some(TpSpec { pump_d: 22, stages: 1, turb_d: 26, turb_l: 3 }), // (a wheel a little wider than its pump)
         ox_tank_bottom: 25,
         fuel_tank: (6, 150, 30, 180),
         he: (170, 8, 200, 24),
@@ -113,12 +138,18 @@ pub fn presets() -> Vec<EngineSpec> {
         gg_size: (12, 26), // combustion cavity, cm (J-2 unit, about 16 x 34 cm outside)
         single_shaft: false, // hydrogen and oxygen pumps can't share a shaft speed (J-2 / RS-25 use two)
         twin_shaft: true,
-        inj: Some((0.40, 3.1)), // injector areas for its lower chamber pressure and mixture ratio 5.5
+        inj: None, // powerhead and injectors sized for the real engine's chamber pressure
+        target_pc: 5.3e6,
         burner: true,
         plug: false,
         ..hydrolox_clone()
     };
     let kerolox = EngineSpec {
+        stage: true,
+        ox_top: true,
+        mix: 2.36,
+        t_gg: 900.0,
+        tapoff: false,
         name: "Merlin 1D",
         blurb: "Falcon 9 first stage (SpaceX Merlin 1D): RP-1/LOX gas generator, one turbopump powerhead (oxidiser pump, turbine, fuel pump on one shaft), generator exhaust dumped overboard, regen-cooled. Real: 97 bar, mixture 2.36, 845 kN at sea level, Isp 282 s; throttles to about 57%.",
         prop: 2,
@@ -140,16 +171,16 @@ pub fn presets() -> Vec<EngineSpec> {
         fuel_tank: (6, 140, 30, 185),
         he: (170, 8, 200, 24),
         inj: None,
-        target_pc: 1.0e7,
+        target_pc: 9.7e6,
         turb_mult: 14.0,
         cartridge_w: 3.0e7,
-        gg_area: (2.3, 0.75), // sized so the powerhead turbine reaches the design point on generator gas
+        gg_area: (2.3, 0.75), // (the powerhead maker sets these)
         gg_size: (8, 22), // Merlin class unit
         gg_dump: 0,
         single_shaft: true,
         twin_shaft: false,
         tank_p: (4.5e5, 4.5e5),
-        ox_trim: 1.45,
+        ox_trim: 1.0,
         dx: DX0,
         depth: 0.36,
         feed_p_max: 2.6e7,
@@ -162,6 +193,11 @@ pub fn presets() -> Vec<EngineSpec> {
         plug: false,
     };
     let hypergolic = EngineSpec {
+        stage: true,
+        ox_top: false,
+        mix: 0.0,
+        t_gg: 1000.0,
+        tapoff: false,
         name: "Hypergolic pressure-fed",
         blurb: "MMH/N2O4 (AJ10 / OMS style): helium-pressurised tanks, no pumps, ablative ceramic chamber, long nozzle",
         prop: 3,
@@ -214,7 +250,8 @@ pub fn presets() -> Vec<EngineSpec> {
         gg_dump: 1,
         single_shaft: false,
         twin_shaft: true,
-        inj: Some((0.95, 2.2)), // oxidiser injectors trimmed for the two-shaft powerhead's pump balance
+        inj: None,
+        target_pc: 1.0e7,
         burner: true,
         plug: false,
         ..hydrolox_clone()
@@ -243,7 +280,8 @@ pub fn presets() -> Vec<EngineSpec> {
         ox_tp: Some(TpSpec { pump_d: 19, stages: 1, turb_d: 30, turb_l: 3 }),
         cartridge_w: 2.0e8,
         gg_area: (24.0, 7.9),
-        inj: Some((5.0, 42.0)), // injector areas, cm2 a cell (at 2.5 cm cells)
+        inj: None,
+        mix: 2.27,
         feed_p_max: 9.2e6,
         ox_head: 1.2,
         electric: false,
@@ -261,7 +299,7 @@ pub fn presets() -> Vec<EngineSpec> {
         name: "RL10",
         blurb: "Centaur / Delta upper stage (Aerojet Rocketdyne RL10), the classic expander: no gas generator or preburner, the hydrogen warmed in the cooling jacket is piped through the turbines and drives the pumps. Small: a 8 cm deep engine. Real: 42 bar, mixture 5.5, 99 kN and Isp 451 s in vacuum (try Vacuum). The real one drives its oxidiser pump from the same turbine through a gearbox; here each pump has its own turbine on the jacket's hydrogen line.",
         fuel_tp: Some(TpSpec { pump_d: 10, stages: 2, turb_d: 14, turb_l: 11 }), // two-stage turbine
-        ox_tp: Some(TpSpec { pump_d: 8, stages: 1, turb_d: 32, turb_l: 3 }), // the wheel spans down to the pump
+        ox_tp: Some(TpSpec { pump_d: 8, stages: 1, turb_d: 16, turb_l: 3 }), // (the wheel reaches up from the injector head past its inlet pipe)
         inj: Some((0.065, 0.45)), // injector areas, cm2 a cell
         target_pc: 4.2e6,
         cartridge_w: 1.0e6, // an expander needs no start cartridge: a small spin-up only
@@ -336,6 +374,7 @@ pub fn presets() -> Vec<EngineSpec> {
     // hypergolic, like the OMS-style engine, so it needs no pumps or igniter.
     let aerospike = EngineSpec {
         name: "Aerospike",
+        stage: false, // (its own layout is a stack already)
         blurb: "Linear aerospike (plug nozzle, XRS-2200 style): MMH/N2O4 pressure-fed, two slot chambers either side of a central spike; the exhaust expands against the spike's ramp, so it adjusts to the altitude",
         plug: true,
         conv_start: 85.0,
@@ -387,18 +426,36 @@ pub fn presets() -> Vec<EngineSpec> {
         ox_tp: Some(TpSpec { pump_d: 22, stages: 1, turb_d: 24, turb_l: 20 }),
         ..hydrolox.clone()
     };
-    vec![hydrolox, hydrolox_gg, kerolox, hypergolic, dump_to_nozzle, staged, f1, rl10, rutherford, tripropellant, aerospike, aerospike_pumped, aerospike_gg, hydrolox_exp1]
+    // The tap-off cycle (J-2S, Blue Origin BE-3): no gas generator at all. Hot gas is bled from the main chamber, at the wall
+    // just under the injector face, down a ceramic-lined duct and through a nozzle onto the turbine, then overboard.
+    let tapoff = EngineSpec {
+        name: "Tap-off cycle",
+        blurb: "Combustion tap-off (Rocketdyne J-2S, Blue Origin BE-3 style), here on RP-1/LOX: no gas generator or preburner. Hot gas is tapped from the main chamber just under the injector face, down a ceramic-lined duct and through a nozzle onto the turbine of a one-shaft turbopump, then dumped overboard. A start cartridge spins the pumps up; once the chamber is lit it drives its own pumps",
+        gg: false,
+        tapoff: true,
+        burner: false,
+        target_pc: 6.0e6,
+        mix: 2.3,
+        cartridge_w: 1.5e7,
+        ..kerolox.clone()
+    };
+    vec![hydrolox, hydrolox_gg, kerolox, hypergolic, dump_to_nozzle, staged, f1, rl10, rutherford, tripropellant, aerospike, aerospike_pumped, aerospike_gg, hydrolox_exp1, tapoff]
 }
 
 fn hydrolox_clone() -> EngineSpec {
     let mut v = presets_base();
     v.fuel_tp = Some(TpSpec { pump_d: 24, stages: 2, turb_d: 24, turb_l: 12 });
-    v.ox_tp = Some(TpSpec { pump_d: 22, stages: 1, turb_d: 32, turb_l: 3 });
+    v.ox_tp = Some(TpSpec { pump_d: 22, stages: 1, turb_d: 26, turb_l: 3 });
     v
 }
 
 fn presets_base() -> EngineSpec {
     EngineSpec {
+        stage: true,
+        ox_top: false,
+        mix: 0.0,
+        t_gg: 1000.0,
+        tapoff: false,
         name: "",
         blurb: "",
         prop: 0,
@@ -448,7 +505,7 @@ impl World {
     /// turbine and fuel pump on one vertical shaft right of the chamber, the gas generator bolted to the
     /// turbine and fed from both pump outlets through control valves, its exhaust driving the turbine and
     /// the turbine exhaust ducted down and dumped. Returns the back-layer pipe runs to add after the shift.
-    fn single_shaft_layout(&mut self, e: &EngineSpec, hw: &dyn Fn(f32) -> f32) -> Vec<(i32, i32, i32, i32)> {
+    fn single_shaft_layout(&mut self, e: &EngineSpec, hw: &dyn Fn(f32) -> f32, feeds: &mut Feeds) -> Vec<(i32, i32, i32, i32)> {
         let cx = 128.0f32;
         let mut back = vec![];
         let fill_empty = |w: &mut World, x0: i32, y0: i32, x1: i32, y1: i32, v: u8| {
@@ -489,10 +546,16 @@ impl World {
         fill_empty(self, tx0 - 1, y_t, tx0 - 1, y_f - 1, c::STEEL);
 
         // oxidiser: tank, inlet to the top of the pump, outlet from its side to the main valve and manifold
-        let ob = e.ox_tank_bottom;
-        self.rect(108, 8, 147, ob, c::TANK_O);
-        self.rect(148, 20, xc + 1, 21, c::PIPE);
-        self.rect(xc, 22, xc + 1, y_o - 1, c::PIPE);
+        if e.stage {
+            // (from the tank stack above: straight down onto the pump)
+            self.rect(xc, 0, xc + 1, y_o - 1, c::PIPE);
+            feeds.ox = xc;
+        } else {
+            let ob = e.ox_tank_bottom;
+            self.rect(108, 8, 147, ob, c::TANK_O);
+            self.rect(148, 20, xc + 1, 21, c::PIPE);
+            self.rect(xc, 22, xc + 1, y_o - 1, c::PIPE);
+        }
         let yo_m = y_o + l_o / 2 - 1; // oxidiser outlet rows yo_m, yo_m + 1 (within the pump's length)
         self.rect(127, yo_m, ox0 - 1, yo_m + 1, c::PIPE);
         self.rect(127, yo_m, 128, 56, c::PIPE);
@@ -571,10 +634,17 @@ impl World {
         // fuel: tank below the powerhead, into the bottom of the fuel pump, out of its side down the far
         // right to the bottom of the bell, into the jacket on both sides (back-layer ring to the left)
         let (tk0, tk1, tky0, tky1) = (200, 236, 90, 135);
-        self.rect(tk0, tky0, tk1, tky1, c::TANK_F);
         self.rect(xc, y_fe + 1, xc + 1, 87, c::PIPE);
-        self.rect(xc, 86, 218, 87, c::PIPE);
-        self.rect(217, 86, 218, tky0 - 1, c::PIPE);
+        if e.stage {
+            // (from the tank stack: down the far right, clear of the powerhead, and back under it to the pump)
+            self.rect(xc, 86, 263, 87, c::PIPE);
+            self.rect(262, 0, 263, 87, c::PIPE);
+            feeds.fuel = 262;
+        } else {
+            self.rect(tk0, tky0, tk1, tky1, c::TANK_F);
+            self.rect(xc, 86, 218, 87, c::PIPE);
+            self.rect(217, 86, 218, tky0 - 1, c::PIPE);
+        }
         let col = 250;
         let ey = e.exit_y as i32;
         let yf = ey - 3;
@@ -597,17 +667,19 @@ impl World {
         self.rect(mc, yf, mc + 1, yf + 1, c::JOINT);
         back.push((mc, yf, col + 1, yf + 1));
 
-        // helium bottle top right, piped to both tanks through regulators
+        // helium bottle top right, piped to both tanks through regulators (a stage carries it in the tank stack)
         let (h0, h1, h2, h3) = (245, 8, 275, 24);
-        self.rect(h0, h1, h2, h3, c::HE_TANK);
-        self.rect(149, h1 + 3, h0 - 1, h1 + 4, c::PIPE);
-        self.rect(148, h1 + 3, 148, h1 + 4, c::REG);
-        let hb = (h0 + h2) / 2;
         let rx = 226;
-        self.rect(hb, h1 - 1, hb + 1, h1 - 1, c::JOINT);
-        self.rect(rx, tky0 - 2, rx + 1, tky0 - 2, c::JOINT);
-        self.rect(rx, tky0 - 1, rx + 1, tky0 - 1, c::REG);
-        back.extend([(hb, 0, hb + 1, h1 - 1), (rx, 0, hb + 1, 1), (rx, 0, rx + 1, tky0 - 2)]);
+        if !e.stage {
+            self.rect(h0, h1, h2, h3, c::HE_TANK);
+            self.rect(149, h1 + 3, h0 - 1, h1 + 4, c::PIPE);
+            self.rect(148, h1 + 3, 148, h1 + 4, c::REG);
+            let hb = (h0 + h2) / 2;
+            self.rect(hb, h1 - 1, hb + 1, h1 - 1, c::JOINT);
+            self.rect(rx, tky0 - 2, rx + 1, tky0 - 2, c::JOINT);
+            self.rect(rx, tky0 - 1, rx + 1, tky0 - 1, c::REG);
+            back.extend([(hb, 0, hb + 1, h1 - 1), (rx, 0, hb + 1, 1), (rx, 0, rx + 1, tky0 - 2)]);
+        }
         if e.tri {
             // the second fuel (liquid hydrogen): a small tank left of the oxidiser tank held at high pressure by
             // its own helium regulator (it takes so little flow that it needs no pump), down a line with a main
@@ -618,7 +690,11 @@ impl World {
             self.rect(lr, ly0 - 2, lr + 1, ly0 - 2, c::JOINT);
             self.rect(lr, ly0 - 1, lr + 1, ly0 - 1, c::REG);
             back.push((lr, 0, lr + 1, ly0 - 2));
-            back.push((lr, 0, rx + 1, 1));
+            if e.stage {
+                feeds.he_tap = Some(lr);
+            } else {
+                back.push((lr, 0, rx + 1, 1));
+            }
             self.rect(lx1 - 1, ly1 + 1, lx1, 47, c::PIPE);
             self.rect(lx1 - 1, 46, 120, 47, c::PIPE);
             self.rect(119, 46, 120, 59, c::PIPE);
@@ -633,7 +709,7 @@ impl World {
     /// generator -> fuel turbine -> duct -> oxidiser turbine -> out of the bottom of the oxidiser turbine,
     /// then: dumped overboard (gg_dump 0), into a slot above a niobium nozzle extension (1), or through a
     /// hot-gas injector into the main chamber (2, closed cycle).
-    fn twin_shaft_layout(&mut self, e: &EngineSpec, hw: &dyn Fn(f32) -> f32) -> Vec<(i32, i32, i32, i32)> {
+    fn twin_shaft_layout(&mut self, e: &EngineSpec, hw: &dyn Fn(f32) -> f32, feeds: &mut Feeds) -> Vec<(i32, i32, i32, i32)> {
         let cx = 128.0f32;
         let mut back = vec![];
         let fill_empty = |w: &mut World, x0: i32, y0: i32, x1: i32, y1: i32, v: u8| {
@@ -709,10 +785,15 @@ impl World {
 
         // oxidiser: tank, inlet to the top of its pump, outlet from the pump's side to the main valve,
         // and a branch from the other side through a control valve to the generator's head
-        let ob = e.ox_tank_bottom;
-        self.rect(108, 8, 147, ob, c::TANK_O);
-        self.rect(148, 20, xb + 1, 21, c::PIPE);
-        self.rect(xb, 22, xb + 1, y_o - 1, c::PIPE);
+        if e.stage {
+            self.rect(xb, 0, xb + 1, y_o - 1, c::PIPE);
+            feeds.ox = xb;
+        } else {
+            let ob = e.ox_tank_bottom;
+            self.rect(108, 8, 147, ob, c::TANK_O);
+            self.rect(148, 20, xb + 1, 21, c::PIPE);
+            self.rect(xb, 22, xb + 1, y_o - 1, c::PIPE);
+        }
         let yo_m = y_o + l_o / 2 - 1;
         self.rect(127, yo_m, bo0 - 1, yo_m + 1, c::PIPE);
         self.rect(127, yo_m, 128, 56, c::PIPE);
@@ -726,8 +807,16 @@ impl World {
         // fuel: tank under its pump, outlet from the pump's side: generator tee with its control valve,
         // main valve, joint, then on the back layer across and down to the bottom of the bell
         let (tk0, tk1, tky0, tky1) = (205, 251, 92, 135);
-        self.rect(tk0, tky0, tk1, tky1, c::TANK_F);
-        self.rect(xa, yb + l_f, xa + 1, tky0 - 1, c::PIPE);
+        if e.stage {
+            // (from the tank stack: down the far right, clear of the preburner, and back under it to the pump)
+            self.rect(xa, yb + l_f, xa + 1, 87, c::PIPE);
+            self.rect(xa, 86, hx + 21, 87, c::PIPE);
+            self.rect(hx + 20, 0, hx + 21, 87, c::PIPE);
+            feeds.fuel = hx + 20;
+        } else {
+            self.rect(tk0, tky0, tk1, tky1, c::TANK_F);
+            self.rect(xa, yb + l_f, xa + 1, tky0 - 1, c::PIPE);
+        }
         let yfl = yb + 3;
         self.rect(hx, yb, hx + 1, yfl - 1, c::PIPE);
         self.rect(hx, yb + 1, hx + 1, yb + 1, c::VALVE_X);
@@ -749,17 +838,19 @@ impl World {
         self.rect(lj, yf, lj + 1, yf + 1, c::JOINT);
         back.extend([(jx, yfl, col + 1, yfl + 1), (col, yfl, col + 1, yf + 1), (lj, yf, col + 1, yf + 1)]);
 
-        // helium: bottle top right, piped to both tanks through regulators
-        let (h0, h1, h2, h3) = (hx + 14, 8, hx + 44, 24);
-        self.rect(h0, h1, h2, h3, c::HE_TANK);
-        self.rect(149, h1 + 3, h0 - 1, h1 + 4, c::PIPE);
-        self.rect(148, h1 + 3, 148, h1 + 4, c::REG);
-        let hb = (h0 + h2) / 2;
-        let rx = tk0 + 4;
-        self.rect(hb, h1 - 1, hb + 1, h1 - 1, c::JOINT);
-        self.rect(rx, tky0 - 2, rx + 1, tky0 - 2, c::JOINT);
-        self.rect(rx, tky0 - 1, rx + 1, tky0 - 1, c::REG);
-        back.extend([(hb, 0, hb + 1, h1 - 1), (rx, 0, hb + 1, 1), (rx, 0, rx + 1, tky0 - 2)]);
+        // helium: bottle top right, piped to both tanks through regulators (a stage carries it in the tank stack)
+        if !e.stage {
+            let (h0, h1, h2, h3) = (hx + 14, 8, hx + 44, 24);
+            self.rect(h0, h1, h2, h3, c::HE_TANK);
+            self.rect(149, h1 + 3, h0 - 1, h1 + 4, c::PIPE);
+            self.rect(148, h1 + 3, 148, h1 + 4, c::REG);
+            let hb = (h0 + h2) / 2;
+            let rx = tk0 + 4;
+            self.rect(hb, h1 - 1, hb + 1, h1 - 1, c::JOINT);
+            self.rect(rx, tky0 - 2, rx + 1, tky0 - 2, c::JOINT);
+            self.rect(rx, tky0 - 1, rx + 1, tky0 - 1, c::REG);
+            back.extend([(hb, 0, hb + 1, h1 - 1), (rx, 0, hb + 1, 1), (rx, 0, rx + 1, tky0 - 2)]);
+        }
 
         // where the oxidiser turbine's exhaust goes
         match e.gg_dump {
@@ -882,18 +973,266 @@ impl World {
         self.rect(gx, ey + 2, dx0 + 3, ey + 4, c::EMPTY);
     }
 
+    /// Tank rows of a stage: (upper tank, lower tank). Liquid hydrogen is so light that its tank is much the bigger.
+    fn stage_tank_rows(e: &EngineSpec) -> (i32, i32) {
+        let pr = &PROPS[e.prop.min(PROPS.len() - 1)];
+        let fuel = if pr.rho_f < 200.0 { 78 } else { 40 };
+        let ox = 46;
+        if e.ox_top { (ox, fuel) } else { (fuel, ox) }
+    }
+
+    /// How many rows the tank stack takes above the engine.
+    fn stage_stack_height(&self, e: &EngineSpec) -> i32 {
+        let (hu, hl) = Self::stage_tank_rows(e);
+        // bottle to row 17, upper tank from row 24, eight rows between the tanks, sixteen rows of feed lines under the lower one
+        24 + hu + 8 + hl + 16
+    }
+
+    /// The tank stack of a stage, in the rows above the engine: the helium bottle on top, then the two propellant tanks
+    /// on the centre line, each pressurised through its own regulator. The lower tank feeds straight down and along to
+    /// its inlet; the upper tank's line goes behind the lower tank on the back pipe layer.
+    fn stage_stack(&mut self, e: &EngineSpec, feeds: &Feeds, back: &mut Vec<Rect>) {
+        let (hu, hl) = Self::stage_tank_rows(e);
+        let dy = self.stage_stack_height(e);
+        let (upper, lower) = if e.ox_top { (c::TANK_O, c::TANK_F) } else { (c::TANK_F, c::TANK_O) };
+        let (x_u, x_l) = if e.ox_top { (feeds.ox, feeds.fuel) } else { (feeds.fuel, feeds.ox) };
+        let (yu0, yu1) = (24, 24 + hu - 1);
+        let (yl0, yl1) = (yu1 + 9, yu1 + 9 + hl - 1);
+        self.rect(110, 4, 145, 17, c::HE_TANK);
+        self.rect(98, yu0, 157, yu1, upper);
+        self.rect(98, yl0, 157, yl1, lower);
+        // helium to the upper tank: straight down from the bottle through a regulator (one row, so that a cell of it touches
+        // both the pipe and the tank)
+        self.rect(127, 18, 128, yu0 - 2, c::PIPE);
+        self.rect(127, yu0 - 1, 128, yu0 - 1, c::REG);
+        // helium to the lower tank: off the bottle's right end, down the right of the stack on the back layer, and through a
+        // regulator onto the tank's side
+        let ry = yl0 + 10;
+        self.rect(146, 9, 147, 10, c::JOINT);
+        self.rect(159, ry, 160, ry + 1, c::JOINT);
+        self.rect(158, ry, 158, ry + 1, c::REG);
+        back.push((146, 9, 160, 10));
+        back.push((159, 9, 160, ry + 1));
+        // a tank of the engine's own (the tripropellant's hydrogen): a helium line down the left of the stack to it
+        if let Some(x) = feeds.he_tap {
+            self.rect(108, 9, 109, 10, c::JOINT);
+            back.push((x, 9, 109, 10));
+            back.push((x, 9, x + 1, dy + 8));
+        }
+        // lower tank: down from the middle of its bottom, along and down to its inlet
+        let (band_b, band_a, yj) = (yl1 + 3, yl1 + 7, yl1 + 11);
+        self.rect(127, yl1 + 1, 128, band_a + 1, c::PIPE);
+        self.rect(x_l.min(127), band_a, x_l.max(127) + 1, band_a + 1, c::PIPE);
+        self.rect(x_l, band_a, x_l + 1, dy - 1, c::PIPE);
+        // upper tank: a joint under it, behind the lower tank and along on the back layer, and through a joint to its inlet
+        self.rect(138, yu1 + 1, 139, yu1 + 2, c::PIPE);
+        self.rect(138, yu1 + 3, 139, yu1 + 4, c::JOINT);
+        back.push((138, yu1 + 3, 139, band_b + 1));
+        back.push((x_u.min(138), band_b, x_u.max(138) + 1, band_b + 1));
+        back.push((x_u, band_b, x_u + 1, yj + 1));
+        self.rect(x_u, yj, x_u + 1, yj + 1, c::JOINT);
+        self.rect(x_u, yj + 2, x_u + 1, dy - 1, c::PIPE);
+    }
+
+    /// A gas-generator engine around a powerhead from the powerhead maker: the part stands right of the chamber, clear of
+    /// the bell, with its two inlets brought up to the top of the engine's rows. The oxidiser leaves the part's bottom and
+    /// comes round on the front pipe layer to a joint beside the chamber, then over the injector head into the oxidiser
+    /// manifold. The fuel leaves beside it and goes down behind the bell on the back layer to the ring at the bottom of
+    /// the cooling jacket. The turbine exhaust is dumped overboard under the part, or (gg_dump 1) ducted down beside the
+    /// bell into a slot above a niobium nozzle extension.
+    fn maker_layout(&mut self, e: &EngineSpec, hw: &dyn Fn(f32) -> f32, feeds: &mut Feeds, front: &mut Vec<Rect>) -> (Vec<Rect>, crate::powerhead::PhSize) {
+        use crate::powerhead::{build_with, size, Layout, PhInput};
+        let cx = 128.0f32;
+        let mut back: Vec<Rect> = vec![];
+        let fill_empty = |w: &mut World, x0: i32, y0: i32, x1: i32, y1: i32, v: u8| {
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    if x >= 0 && y >= 0 && (x as usize) < W && (y as usize) < H && w.cells[World::idx(x as usize, y as usize)] == c::EMPTY {
+                        w.cells[World::idx(x as usize, y as usize)] = v;
+                    }
+                }
+            }
+        };
+        let inp = PhInput {
+            prop: e.prop,
+            pc: e.target_pc,
+            throat_cells: 2.0 * e.throat_hw,
+            layout: if e.twin_shaft { Layout::Twin } else { Layout::Single },
+            t_gg: e.t_gg,
+            dx: e.dx,
+            depth: e.depth,
+            axi: false,
+            tank_p_f: e.tank_p.0,
+            tank_p_o: e.tank_p.1,
+            steps: self.st.steps_per_frame,
+            p_exh: 1.5e5,
+            tapoff: e.tapoff,
+        };
+        // (exhaust into the nozzle: the last wheel exhausts against its collector, a few bar)
+        let s = size(&PhInput { p_exh: if e.gg_dump == 1 { 3.0e5 } else { 1.5e5 }, ..inp });
+        let (clip, ports) = build_with(&s, e.burner, false);
+        let (pw, ph) = (clip.w as i32, clip.h as i32);
+        let (ll, n_noz) = crate::powerhead::last_wheel(&s);
+        // a tap-off part goes down mirrored: its turbine next to the chamber, where the gas comes from
+        let mir = e.tapoff;
+        let port_y = |name: &str| ports.iter().find(|p| p.name.starts_with(name)).map(|p| p.y).unwrap();
+        let port = |name: &str| {
+            let x = ports.iter().find(|p| p.name.starts_with(name)).map(|p| p.x).unwrap();
+            // (ports are two cells wide, the exhaust as wide as the wheel is long, the gas inlet as wide as the nozzle)
+            let wd = if name.starts_with("turbine") { ll } else if name.starts_with("drive") { n_noz } else { 2 };
+            if mir { pw - x - wd } else { x }
+        };
+        let l3 = e.liner + e.jacket + e.shell;
+        // where it stands: beside the chamber, its top under the tank stack's feed lines, its left clear of the chamber wall
+        // (and of the bell, as far down as its lines go), and its exhaust clear of the bell's rim
+        let py = if e.tapoff { 70 - port_y("drive gas in") } else { 44 };
+        feeds.top = 40;
+        let xj = (cx + e.ch_hw + l3) as i32 + 2; // the oxidiser's joint column beside the chamber
+        let mut px = xj + 6;
+        for y in 58..py + ph + 8 {
+            px = px.max((cx + hw(y as f32 + 0.5) + l3).ceil() as i32 + 6);
+        }
+        let ex = port("turbine exhaust");
+        let gx = (cx + e.exit_hw) as i32; // first column right of the exit's gas
+        px = px.max(if e.gg_dump == 1 { gx + 22 - ex } else { gx + l3 as i32 + 8 - ex });
+        for k in 0..clip.w * clip.h {
+            let kx = (k % clip.w) as i32;
+            let (x, y) = (px + if mir { pw - 1 - kx } else { kx }, py + (k / clip.w) as i32);
+            if clip.cells[k] != c::EMPTY {
+                self.cells[World::idx(x as usize, y as usize)] = clip.cells[k];
+            }
+            if clip.back[k] == c::PIPE {
+                back.push((x, y, x, y));
+            }
+        }
+        if e.tapoff {
+            // the tap: out through the chamber's right wall three rows under the injector face, along a niobium duct
+            // and down through the casing's nozzle onto the wheel
+            let cw = (cx + e.ch_hw) as i32; // first wall column right of the chamber's gas
+            let (n0, n1) = (px + port("drive gas in"), px + port("drive gas in") + n_noz - 1);
+            // (the duct is niobium, two cells thick: it runs white-hot in gas straight from the chamber and radiates the heat
+            // away, where steel would melt and a ceramic lining crack under the pressure)
+            self.rect(cw, 62, n1 + 2, 68, c::NIOBIUM);
+            self.rect(n0 - 2, 67, n1 + 2, 69, c::NIOBIUM);
+            self.rect(cw, 64, n1, 66, c::EMPTY);
+            self.rect(n0, 67, n1, 69, c::EMPTY);
+            // (and so are the turbine's casing and its exhaust duct: the gas is still far hotter than steel stands when it leaves)
+            for y in py..py + ph {
+                for x in px + ex - 2..=px + ex + ll + 1 {
+                    let i = World::idx(x as usize, y as usize);
+                    if self.cells[i] == c::STEEL {
+                        self.cells[i] = c::NIOBIUM;
+                    }
+                }
+            }
+            // the duct cuts the cooling jacket on this side off from its injector manifold: a line behind it joins them again
+            let (j0, j1) = (cw + e.liner as i32, cw + (e.liner + e.jacket) as i32 - 1);
+            self.rect(j0, 69, j1, 70, c::JOINT);
+            self.cells[World::idx(155, 60)] = c::JOINT;
+            back.push((j0, 69, 158, 70));
+            back.push((157, 60, 158, 70));
+            back.push((155, 60, 158, 60));
+        }
+        // inlets: straight up to the tank stack
+        for (name, to) in [("fuel in", &mut feeds.fuel), ("oxidiser in", &mut feeds.ox)] {
+            let x = px + port(name);
+            self.rect(x, feeds.top, x + 1, py, c::PIPE);
+            *to = x;
+        }
+        // oxidiser: on from the part's bottom to a joint, round in front of the fuel line to a joint beside the chamber, and
+        // over the injector head into the manifold
+        let xo = px + port("oxidiser out");
+        let yb = py + ph - 1; // the part's bottom row (its outlets end open on it)
+        self.rect(xo, yb, xo + 1, yb + 3, c::PIPE);
+        self.rect(xo, yb + 4, xo + 1, yb + 5, c::JOINT);
+        front.push((xj, yb + 4, xo + 1, yb + 5));
+        front.push((xj, 54, xj + 1, yb + 5));
+        self.rect(xj, 54, xj + 1, 55, c::JOINT);
+        self.rect(127, 54, xj - 1, 55, c::PIPE);
+        self.rect(127, 56, 128, 59, c::PIPE);
+        // (the main oxidiser valve and its throttle sit on the injector head, as on the real engines)
+        self.rect(127, 57, 128, 57, c::VALVE_X);
+        self.rect(127, 58, 128, 58, c::THROTTLE);
+        // fuel: a joint on the part's outlet, down behind the bell to the ring that feeds the jacket on both sides
+        let xf = px + port("fuel out");
+        self.rect(xf, yb, xf + 1, yb + 1, c::JOINT);
+        let ey = e.exit_y as i32;
+        let yf = ey - 3;
+        let h = hw(yf as f32 + 0.5);
+        let tx = (cx - (h + e.liner + e.jacket * 0.5)).floor() as i32; // outer jacket column on the left
+        let mt = 255 - tx;
+        self.rect(mt, yf, mt + 3, yf + 1, c::PIPE);
+        self.rect(mt + 2, yf, mt + 3, yf + 1, c::JOINT);
+        let lj = (tx - 8).max(2);
+        self.rect(lj, yf, tx, yf + 1, c::PIPE);
+        self.rect(lj, yf, lj + 1, yf + 1, c::JOINT);
+        // (round the outside of the bell's rim, not across behind the exhaust)
+        let col = gx + l3 as i32 + 3;
+        back.push((xf, yb, xf + 1, yb + 9));
+        back.push((xf.min(col), yb + 8, xf.max(col) + 1, yb + 9));
+        back.push((col, yb + 8, col + 1, yf + 1));
+        back.push((lj, yf, col + 1, yf + 1));
+        if e.gg_dump == 1 {
+            // exhaust into the nozzle: a plate of pipe joints closes the duct under the last wheel and takes its gas into a
+            // line on the back layer, down beside the bell and across behind the top of a radiation-cooled niobium skirt. Along
+            // the inside of the skirt's wall on both sides the line is gas outlets: the exhaust comes out into the stream there,
+            // moving with it, and lines the wall (nothing sticks into the jet, so nothing backs the turbines up)
+            let e0 = px + ex;
+            // (the collector: the duct carried on down ten rows, its sides and bottom all joints, so the line has plenty of
+            // cells to draw the gas from and holds no pressure against the wheel)
+            self.rect(e0 - 1, yb - 4, e0 - 1, yb + 11, c::JOINT);
+            self.rect(e0 + ll, yb - 4, e0 + ll, yb + 11, c::JOINT);
+            self.rect(e0 - 1, yb + 11, e0 + ll, yb + 11, c::JOINT);
+            fill_empty(self, e0 - 2, yb - 5, e0 - 1, yb + 12, c::STEEL);
+            fill_empty(self, e0 + ll, yb - 5, e0 + ll + 1, yb + 12, c::STEEL);
+            fill_empty(self, e0 - 2, yb + 11, e0 + ll + 1, yb + 12, c::STEEL);
+            for y in yb + 1..=yb + 10 {
+                for x in e0..e0 + ll {
+                    self.cells[World::idx(x as usize, y as usize)] = c::EMPTY;
+                }
+            }
+            feeds.reopen.push((e0, yb - 4, e0 + ll - 1, yb + 10));
+            let ext = crate::design::NozzleSpec {
+                cx,
+                y_throat: ey + 1,
+                y_exit: ey + 91,
+                throat_hw: e.exit_hw,
+                // (a skirt carries on from a bell that has already turned the flow nearly straight: a shallow cone, about
+                // 8 degrees, not a second bell flaring out from the joint)
+                expansion: 1.0 + 0.14 * 90.0 / e.exit_hw,
+                contour: crate::design::Contour::Conical,
+                liner: 1,
+                jacket: 0,
+                shell: 0,
+                axi: false,
+                liner_mat: c::NIOBIUM,
+            };
+            self.build_nozzle(&ext);
+            let (wl, wr) = (128 - e.exit_hw as i32, 127 + e.exit_hw as i32); // the skirt's first and last gas columns at its top
+            back.push((e0, yb + 11, e0 + 1, ey + 4));
+            back.push((wl, ey + 3, e0 + 1, ey + 4));
+            feeds.outlets.push((wl, ey + 3, wl + 9, ey + 4));
+            feeds.outlets.push((wr - 9, ey + 3, wr, ey + 4));
+            back.push((wl, ey + 5, wl + 1, ey + 16));
+            back.push((wr - 1, ey + 5, wr, ey + 16));
+            feeds.outlets.push((wl, ey + 5, wl + 1, ey + 16));
+            feeds.outlets.push((wr - 1, ey + 5, wr, ey + 16));
+        }
+        (back, s)
+    }
+
     pub fn load_preset(&mut self, k: usize) {
         let all = presets();
         let e = &all[k.min(all.len() - 1)];
         self.build_engine(e);
         // how each engine gets its pumps turning: the J-2 and the staged engine on a gas start tank (cold gas blown
-        // down through the turbines), the Merlin on tank head alone, the rest on a start cartridge, a part beside
+        // down through the turbines), the Merlin on helium as well, the rest on a start cartridge, a part beside
         // the turbopump sized for the power it has to give
-        self.st.he_spin = matches!(k, 1 | 5);
+        self.st.he_spin = matches!(k, 1 | 2 | 5); // (the Merlin's turbopump is spun up on helium too)
         if self.st.he_spin && self.add_helium_start() {
             self.st.he_spin = false; // a real helium line does it
         }
-        self.st.dead_start = k == 2 || k == 12; // (the gas-generator aerospike, last in the list, starts on tank head too)
+        self.st.dead_start = k == 12; // (the gas-generator aerospike starts on tank head)
         if k == 2 {
             // the Merlin lights its generator and chamber on TEA-TEB (three starts: a landing burn needs the third)
             self.add_teateb(18);
@@ -1631,13 +1970,22 @@ impl World {
             }
         }
         }
+        let mut feeds = Feeds::default();
+        let mut front: Vec<Rect> = vec![];
+        let mut maker: Option<crate::powerhead::PhSize> = None;
+        let stage = e.stage && !e.plug;
         let back: Vec<(i32, i32, i32, i32)> = if let Some(b) = plug_back {
             b
+        } else if stage && ((e.gg && e.gg_dump != 2) || e.tapoff) && (e.single_shaft || e.twin_shaft) {
+            let (b, s) = self.maker_layout(e, &hw, &mut feeds, &mut front);
+            maker = Some(s);
+            b
         } else if e.single_shaft {
-            self.single_shaft_layout(e, &hw)
+            self.single_shaft_layout(e, &hw, &mut feeds)
         } else if e.twin_shaft {
-            self.twin_shaft_layout(e, &hw)
+            self.twin_shaft_layout(e, &hw, &mut feeds)
         } else {
+            let mut stage_back: Vec<Rect> = vec![];
             // fuel loop over the top joins the two fuel manifolds
             self.rect(98, 3, 99, 61, c::PIPE);
             self.rect(156, 3, 157, 61, c::PIPE);
@@ -1645,8 +1993,17 @@ impl World {
 
             // oxidiser: tank, optional turbopump, main valve, into the manifold
             let ob = e.ox_tank_bottom;
-            self.rect(108, 8, 147, ob, c::TANK_O);
             let mut y_top = ob + 1;
+            if stage {
+                // (from the tank stack above: behind the fuel loop on the back layer, between two joints)
+                self.rect(127, 0, 128, 1, c::JOINT);
+                self.rect(127, 6, 128, 7, c::JOINT);
+                stage_back.push((127, 0, 128, 7));
+                feeds.ox = 127;
+                y_top = 8;
+            } else {
+                self.rect(108, 8, 147, ob, c::TANK_O);
+            }
             if let Some(tp) = &e.ox_tp {
                 let d = tp.pump_d;
                 let w = ((0.6 * (d * tp.stages) as f32).round() as i32).max(3);
@@ -1654,7 +2011,9 @@ impl World {
                 let px0 = 128 - w / 2;
                 self.rect(127, y_top, 128, py0 - 1, c::PIPE);
                 self.rect(px0, py0, px0 + w - 1, py1, c::PUMP);
-                self.rect(px0 - tp.turb_l, y_top, px0 - 1, (y_top + tp.turb_d - 1).min(57), drive);
+                // (a stage's wheel stands on the injector head beside its pump; the old layout hung it from the tank)
+                let ty0 = if stage { (58 - tp.turb_d).max(y_top) } else { y_top };
+                self.rect(px0 - tp.turb_l, ty0, px0 - 1, (ty0 + tp.turb_d - 1).min(57), drive);
                 y_top = py1 + 1;
             }
             self.rect(127, y_top, 128, 56, c::PIPE);
@@ -1730,36 +2089,48 @@ impl World {
                 gg_back2 = Some((xb + 1, oy, xb + 2, hy + 1));
             }
             let (h0, h1, h2, h3) = e.he;
-            self.rect(h0, h1, h2, h3, c::HE_TANK);
             // helium is piped to each tank and enters through a pressure regulator
             let (fx0, fy0, fx1, _) = e.fuel_tank;
-            // oxidiser: across from the bottle to the side of the tank, passing behind the fuel loop
-            // on the back layer (joints at both ends)
             let mut back: Vec<(i32, i32, i32, i32)> = vec![];
-            self.rect(159, h1 + 3, h0 - 1, h1 + 4, c::PIPE);
-            self.rect(159, h1 + 3, 160, h1 + 4, c::JOINT);
-            self.rect(149, h1 + 3, 150, h1 + 4, c::JOINT);
-            back.push((149, h1 + 3, 160, h1 + 4));
-            self.rect(148, h1 + 3, 148, h1 + 4, c::REG);
-            // fuel: up from the bottle, along the top, down the left side and onto the top of the tank, all
-            // on the back layer (joints at both ends) so it doesn't wall in the space beside the engine
-            let hx = (h0 + h2) / 2;
-            let rx = (fx0 + fx1) / 2;
-            self.rect(hx, h1 - 1, hx + 1, h1 - 1, c::JOINT);
-            self.rect(rx - 1, fy0 - 2, rx, fy0 - 2, c::JOINT);
-            self.rect(rx - 1, fy0 - 1, rx, fy0 - 1, c::REG);
-            let he_back = [(hx, 0, hx + 1, h1 - 1), (2, 0, hx + 1, 1), (2, 0, 3, fy0 - 2), (2, fy0 - 3, rx, fy0 - 2)];
+            let mut he_back: Vec<Rect> = vec![];
+            if !stage {
+                self.rect(h0, h1, h2, h3, c::HE_TANK);
+                // oxidiser: across from the bottle to the side of the tank, passing behind the fuel loop
+                // on the back layer (joints at both ends)
+                self.rect(159, h1 + 3, h0 - 1, h1 + 4, c::PIPE);
+                self.rect(159, h1 + 3, 160, h1 + 4, c::JOINT);
+                self.rect(149, h1 + 3, 150, h1 + 4, c::JOINT);
+                back.push((149, h1 + 3, 160, h1 + 4));
+                self.rect(148, h1 + 3, 148, h1 + 4, c::REG);
+                // fuel: up from the bottle, along the top, down the left side and onto the top of the tank, all
+                // on the back layer (joints at both ends) so it doesn't wall in the space beside the engine
+                let hx = (h0 + h2) / 2;
+                let rx = (fx0 + fx1) / 2;
+                self.rect(hx, h1 - 1, hx + 1, h1 - 1, c::JOINT);
+                self.rect(rx - 1, fy0 - 2, rx, fy0 - 2, c::JOINT);
+                self.rect(rx - 1, fy0 - 1, rx, fy0 - 1, c::REG);
+                he_back.extend([(hx, 0, hx + 1, h1 - 1), (2, 0, hx + 1, 1), (2, 0, 3, fy0 - 2), (2, fy0 - 3, rx, fy0 - 2)]);
+            }
 
             // fuel: tank, optional turbopump, riser with the main valve, then to the jacket or the loop
             let (fx0, fy0, fx1, fy1) = e.fuel_tank;
-            self.rect(fx0, fy0, fx1, fy1, c::TANK_F);
+            if !stage {
+                self.rect(fx0, fy0, fx1, fy1, c::TANK_F);
+            }
             let (sx, sy, sb);
             if let Some(tp) = &e.fuel_tp {
                 let d = tp.pump_d;
                 let w = ((0.6 * (d * tp.stages) as f32).round() as i32).max(3);
                 let px0 = fx1 + 10;
                 let py0 = 161 - d / 2;
-                self.rect(fx1 + 1, 160, px0 - 1, 161, c::PIPE);
+                if stage {
+                    // (from the tank stack: down the far left to the pump)
+                    self.rect(20, 0, 21, 161, c::PIPE);
+                    self.rect(20, 160, px0 - 1, 161, c::PIPE);
+                    feeds.fuel = 20;
+                } else {
+                    self.rect(fx1 + 1, 160, px0 - 1, 161, c::PIPE);
+                }
                 self.rect(px0, py0, px0 + w - 1, py0 + d - 1, c::PUMP);
                 let ty0 = 161 - tp.turb_d / 2;
                 self.rect(px0 + w, ty0, px0 + w + tp.turb_l - 1, ty0 + tp.turb_d - 1, drive);
@@ -1767,7 +2138,14 @@ impl World {
                 sy = py0 - 1;
                 sb = py0 + d;
             } else {
-                self.rect(fx1 + 1, 160, 53, 161, c::PIPE);
+                if stage {
+                    feeds.fuel = 52;
+                    if e.jacket > 0.0 {
+                        self.rect(52, 0, 53, 161, c::PIPE);
+                    }
+                } else {
+                    self.rect(fx1 + 1, 160, 53, 161, c::PIPE);
+                }
                 sx = 52;
                 sy = 159;
                 sb = 162;
@@ -1836,6 +2214,12 @@ impl World {
                         exp_back.push((108, 60, 147, 60));
                     }
                 }
+            } else if stage {
+                // pressure-fed from the stack: straight down through the main valve and the throttle, and across into the loop
+                self.rect(sx, 0, sx + 1, 41, c::PIPE);
+                self.rect(sx, 20, sx + 1, 21, c::VALVE_X);
+                self.rect(sx, 24, sx + 1, 24, c::THROTTLE);
+                self.rect(sx, 40, 97, 41, c::PIPE);
             } else {
                 let ty = 42;
                 self.rect(sx, ty, sx + 1, sy, c::PIPE);
@@ -1854,11 +2238,26 @@ impl World {
             back.extend(gg_back);
             back.extend(gg_back2);
             back.extend(he_back);
+            back.extend(stage_back);
             back
         };
         let mut back = back;
         if e.gg && e.gg_dump == 2 && e.twin_shaft {
             back.push((137, 60, 148, 60));
+        }
+        // a stage: everything so far is the engine; move it down the frame and put the tank stack above it
+        let dy = if stage { self.stage_stack_height(e) - feeds.top } else { 0 };
+        if stage {
+            for y in (0..H).rev() {
+                for x in 0..W {
+                    self.cells[World::idx(x, y)] = if y >= dy as usize { self.cells[World::idx(x, y - dy as usize)] } else { c::EMPTY };
+                }
+            }
+            for r in back.iter_mut().chain(front.iter_mut()).chain(feeds.outlets.iter_mut()).chain(feeds.reopen.iter_mut()) {
+                r.1 += dy;
+                r.3 += dy;
+            }
+            self.stage_stack(e, &feeds, &mut back);
         }
         // move the drawing from the layout frame to the middle of the simulation space
         for y in (0..H).rev() {
@@ -1867,22 +2266,32 @@ impl World {
                 self.cells[World::idx(x, y)] = v;
             }
         }
-        for &(x0, y0, x1, y1) in &back {
+        for (layer, runs) in [(1u8, &back), (2u8, &front)] {
+            for &(x0, y0, x1, y1) in runs {
+                for y in y0..=y1 {
+                    for x in x0..=x1 {
+                        self.set_layer_cell(layer, World::idx(x as usize + PRESET_OX, y as usize + PRESET_OY), c::PIPE);
+                    }
+                }
+            }
+        }
+        for &(x0, y0, x1, y1) in &feeds.outlets {
             for y in y0..=y1 {
                 for x in x0..=x1 {
-                    self.set_layer_cell(1, World::idx(x as usize + PRESET_OX, y as usize + PRESET_OY), c::PIPE);
+                    self.set_layer_cell(1, World::idx(x as usize + PRESET_OX, y as usize + PRESET_OY), c::GASOUT);
                 }
             }
         }
         if e.tri {
+            let oy = PRESET_OY + dy as usize;
             for y in 8..=25 {
                 for x in 82..=104 {
-                    let i = World::idx(x + PRESET_OX, y + PRESET_OY);
+                    let i = World::idx(x + PRESET_OX, y + oy);
                     self.fluid[i] = 1; // liquid hydrogen (FUELS index 0, plus one)
                 }
             }
             for x in 90..=91 {
-                self.reg_p[World::idx(x + PRESET_OX, 7 + PRESET_OY)] = e.tri_p;
+                self.reg_p[World::idx(x + PRESET_OX, 7 + oy)] = e.tri_p;
             }
         }
         if e.plug && (e.electric || e.gg) {
@@ -1894,6 +2303,13 @@ impl World {
             self.st.mix_target = 1.8; // (held with the throttle valves in both main lines)
         }
         self.auto_wall_all();
+        for &(x0, y0, x1, y1) in &feeds.reopen {
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    self.cells[World::idx(x as usize + PRESET_OX, y as usize + PRESET_OY)] = c::EMPTY;
+                }
+            }
+        }
         self.dirty.clear();
         self.nets_dirty = true;
         match e.inj {
@@ -1910,6 +2326,18 @@ impl World {
                 self.auto_size_injectors(e.target_pc);
                 self.st.inj_area_o *= e.ox_trim;
             }
+        }
+        if let Some(s) = &maker {
+            // the powerhead maker's settings: generator orifices, pressure and temperature hold, governor, mixture control
+            let (cart, mix) = (self.st.cartridge_w, self.st.mix_target);
+            crate::powerhead::apply(s, &mut self.st);
+            self.st.cartridge_w = cart.max(s.cartridge_w);
+            if mix > 0.0 {
+                self.st.mix_target = mix;
+            }
+        }
+        if e.mix > 0.0 {
+            self.st.mix_target = e.mix;
         }
     }
 }

@@ -492,7 +492,7 @@ impl App {
     fn apply(&mut self, i: usize, v: u8) {
         // replace mode: only change what's already there (a part on the layer being painted), never fill empty space
         if self.replace && v != c::EMPTY && !matches!(v, TOOL_GAS | TOOL_FUEL | TOOL_FIRE) {
-            let there = if self.layer != 0 && v == c::PIPE { self.world.layer_cell(self.layer, i) } else { self.world.cells[i] };
+            let there = if self.layer != 0 && matches!(v, c::PIPE | c::GASOUT) { self.world.layer_cell(self.layer, i) } else { self.world.cells[i] };
             if there == c::EMPTY {
                 return;
             }
@@ -514,7 +514,8 @@ impl App {
                     self.world.paint_gas(i, 3);
                 }
             }
-            v if self.layer != 0 && v == c::PIPE => self.world.set_layer_cell(self.layer, i, v),
+            v if self.layer != 0 && matches!(v, c::PIPE | c::GASOUT) => self.world.set_layer_cell(self.layer, i, v),
+            c::GASOUT => {} // (a gas outlet only goes on the back or front layer)
             c::EMPTY => self.world.paint_gas(i, 3), // erase walls and any painted gas, fuel or fire
             v if c::auto_walls(v) => {
                 if v == c::HE_TANK {
@@ -534,7 +535,7 @@ impl App {
             return 0;
         }
         // layer pipes only go on the back/front layers; everything else is in the engine plane
-        let layer = if self.layer != 0 && (v == c::PIPE || v == c::EMPTY) { self.layer } else { 0 };
+        let layer = if self.layer != 0 && matches!(v, c::PIPE | c::GASOUT | c::EMPTY) { self.layer } else { 0 };
         let start = World::idx(cx as usize, cy as usize);
         let target = self.world.layer_cell(layer, start);
         let gas_tool = matches!(v, TOOL_GAS | TOOL_FUEL | TOOL_FIRE);
@@ -863,7 +864,7 @@ impl App {
             };
             let groups: [(&str, &[u8]); 5] = [
                 ("Structure", &[c::STEEL, c::COPPER, c::CERAMIC, c::NIOBIUM]),
-                ("Plumbing", &[c::PIPE, c::VALVE, c::THROTTLE, c::JOINT, c::REG, c::INJ, c::AINJ, c::HGI]),
+                ("Plumbing", &[c::PIPE, c::VALVE, c::THROTTLE, c::JOINT, c::REG, c::INJ, c::AINJ, c::HGI, c::GASOUT]),
                 ("Tanks and bottles", &[c::TANK_F, c::TANK_O, c::HE_TANK]),
                 ("Turbopumps and gas generators", &[c::PUMP, c::TURBINE, c::SHAFT, c::GG, c::BURNER, c::CARTRIDGE, c::TEATEB]),
                 ("Electric pumps", &[c::MOTOR, c::BATTERY, c::WIRE]),
@@ -1361,6 +1362,30 @@ impl App {
                     .clicked()
                 {
                     act = Some(2);
+                }
+            });
+            // start sequence lamps: grey not yet, amber (blinking) in progress, green done
+            let blink = ui.input(|i| i.time).fract() < 0.6;
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(8.0, 2.0);
+                for (name, state, tip) in w.start_lamps() {
+                    let col = match state {
+                        1 if blink => warn,
+                        1 => egui::Color32::from_rgb(120, 95, 40),
+                        2 => good,
+                        _ => egui::Color32::from_gray(55),
+                    };
+                    let text = egui::RichText::new(name).small().color(if state == 0 { dim } else { egui::Color32::from_gray(225) });
+                    let resp = ui
+                        .horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 3.0;
+                            let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+                            ui.painter().circle_filled(rect.center(), 4.5, col);
+                            ui.painter().circle_stroke(rect.center(), 4.5, egui::Stroke::new(1.0, egui::Color32::from_gray(20)));
+                            ui.label(text);
+                        })
+                        .response;
+                    resp.on_hover_text(tip);
                 }
             });
             if !g.ignited && !g.no_flame.is_empty() {
@@ -3186,6 +3211,41 @@ fn selftest(seconds: f32, shot: Option<String>, args: &[String]) {
     if let Some(path) = args.iter().position(|a| a == "--save").and_then(|p| args.get(p + 1)) {
         std::fs::write(path, w.to_text()).unwrap();
     }
+    // --cellpng FILE: the engine as built (cells, with back-layer pipes dimmed blue and front-layer pipes bright), cropped
+    // to what is drawn, 3 pixels a cell
+    if let Some(path) = args.iter().position(|a| a == "--cellpng").and_then(|p| args.get(p + 1)) {
+        let used: Vec<usize> = (0..world::N).filter(|&i| w.cells[i] != c::EMPTY || w.back[i] != 0 || w.front[i] != 0).collect();
+        let (x0, x1) = (used.iter().map(|&i| i % W).min().unwrap_or(0).saturating_sub(4), (used.iter().map(|&i| i % W).max().unwrap_or(0) + 4).min(W - 1));
+        let (y0, y1) = (used.iter().map(|&i| i / W).min().unwrap_or(0).saturating_sub(4), (used.iter().map(|&i| i / W).max().unwrap_or(0) + 4).min(world::H - 1));
+        let (iw, ih, z) = (x1 - x0 + 1, y1 - y0 + 1, 3usize);
+        let mut data = vec![22u8; iw * z * ih * z * 3];
+        for y in 0..ih * z {
+            for x in 0..iw * z {
+                let i = World::idx(x0 + x / z, y0 + y / z);
+                let mut px = if w.cells[i] != c::EMPTY { c::rgb(w.cells[i]) } else { [22, 22, 22] };
+                if w.back[i] != 0 && w.cells[i] != c::JOINT {
+                    px = [(px[0] as u32 * 2 / 3 + 20) as u8, (px[1] as u32 * 2 / 3 + 40) as u8, (px[2] as u32 * 2 / 3 + 80) as u8];
+                }
+                if w.front[i] != 0 && w.cells[i] != c::JOINT && (x / z + y / z) % 2 == 0 {
+                    px = [235, 235, 255];
+                }
+                data[(y * iw * z + x) * 3..(y * iw * z + x) * 3 + 3].copy_from_slice(&px);
+            }
+        }
+        let mut enc = png::Encoder::new(std::io::BufWriter::new(std::fs::File::create(path).unwrap()), (iw * z) as u32, (ih * z) as u32);
+        enc.set_color(png::ColorType::Rgb);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.write_header().unwrap().write_image_data(&data).unwrap();
+        println!("wrote {path} ({iw} x {ih} cells from {x0},{y0})");
+    }
+    // --probe X Y: the cell types in a 9 x 11 patch round a cell (for chasing a failure the event log names)
+    if let Some(k) = args.iter().position(|a| a == "--probe") {
+        let (px, py): (usize, usize) = (args[k + 1].parse().unwrap(), args[k + 2].parse().unwrap());
+        for y in py - 6..=py + 4 {
+            let row: Vec<String> = (px - 4..=px + 4).map(|x| format!("{:>3}", w.cells[World::idx(x, y)])).collect();
+            println!("probe y={y}: {}", row.join(" "));
+        }
+    }
     let mut frame = 0u32;
     let mut stand = stand::TestStand::default();
     let mut first = true;
@@ -3595,6 +3655,10 @@ fn selftest(seconds: f32, shot: Option<String>, args: &[String]) {
                     }
                 }
             }
+            for (ends, outs) in &w.gas_outlets {
+                let avg = |v: &Vec<usize>| v.iter().map(|&j| gas_p(rb.state[j], w.st.p().gamma)).sum::<f32>() / v.len().max(1) as f32 / 1e5;
+                println!("   gas outlet line: {} intake cells at {:.1} bar, {} outlet cells at {:.1} bar", ends.len(), avg(ends), outs.len(), avg(outs));
+            }
             for (k, f) in w.gg_faces.iter().enumerate() {
                 if rb.valid && !f.is_empty() {
                     let p = f.iter().map(|x| gas_p(rb.state[x.1], w.st.p().gamma)).sum::<f32>() / f.len() as f32;
@@ -3604,6 +3668,15 @@ fn selftest(seconds: f32, shot: Option<String>, args: &[String]) {
             }
             for n in w.nets.iter().filter(|n| !n.injectors.is_empty()) {
                 println!("   net p{} tank{:.1} head{:.0} up{:.0} pc{:.0} m{:.1} line{:.0} valves{:?} inj{} breaches{} leak{:.2}", n.prop, n.p_tank / 1e5, n.head / 1e5, n.p_up / 1e5, n.pc_f / 1e5, n.m_inj, n.p_line / 1e5, n.valves.iter().map(|&v| w.valves[v].pos).collect::<Vec<_>>(), n.injectors.len(), n.breaches.len(), n.leak);
+            }
+            // --probet X Y: wall temperatures along a row (16 cells from X), with the flow and wetness of any injector there
+            if let Some(k) = args.iter().position(|a| a == "--probet") {
+                let (px, py): (usize, usize) = (args[k + 1].parse().unwrap(), args[k + 2].parse().unwrap());
+                // (gas cells: the gas temperature)
+                let pr = w.st.p();
+                let temp = |i: usize| rb.state.get(i).map_or(0.0, |s| if w.cells[i] == c::EMPTY { gas_p(*s, pr.gamma) / (s[0].max(1e-6) * pr.rgas) } else { s[3] });
+                let row: Vec<String> = (px..px + 16).map(|x| format!("{}:{:.0}", w.cells[World::idx(x, py)], temp(World::idx(x, py)))).collect();
+                println!("   probet y={py}: {}", row.join(" "));
             }
             let nan = rb.state.iter().filter(|s| !s[0].is_finite() || !s[3].is_finite()).count();
             println!(
