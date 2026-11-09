@@ -3672,7 +3672,10 @@ fn selftest(seconds: f32, shot: Option<String>, args: &[String]) {
             // --probet X Y: wall temperatures along a row (16 cells from X), with the flow and wetness of any injector there
             if let Some(k) = args.iter().position(|a| a == "--probet") {
                 let (px, py): (usize, usize) = (args[k + 1].parse().unwrap(), args[k + 2].parse().unwrap());
-                let row: Vec<String> = (px..px + 16).map(|x| format!("{}:{:.0}", w.cells[World::idx(x, py)], rb.state.get(World::idx(x, py)).map_or(0.0, |s| s[3]))).collect();
+                // (gas cells: the gas temperature)
+                let pr = w.st.p();
+                let temp = |i: usize| rb.state.get(i).map_or(0.0, |s| if w.cells[i] == c::EMPTY { gas_p(*s, pr.gamma) / (s[0].max(1e-6) * pr.rgas) } else { s[3] });
+                let row: Vec<String> = (px..px + 16).map(|x| format!("{}:{:.0}", w.cells[World::idx(x, py)], temp(World::idx(x, py)))).collect();
                 println!("   probet y={py}: {}", row.join(" "));
             }
             let nan = rb.state.iter().filter(|s| !s[0].is_finite() || !s[3].is_finite()).count();

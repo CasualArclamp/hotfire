@@ -16,9 +16,11 @@ an animation.
 - **Build anything**: steel, copper liner and niobium walls, pipes on three layers, valves, throttle valves,
   regulators, tanks, helium and TEA-TEB bottles, turbopumps sized like real hardware, gas generators and burners,
   electric pumps and batteries. Copy, paste, stamp and undo. Save your designs.
-- **Thirteen presets to start from**: Merlin 1D, F-1, J-2, RL10, Rutherford, a hydrolox expander, hydrolox staged
-  combustion, a hydrolox gas generator that exhausts into the nozzle, a pressure-fed hypergolic engine, a
-  tripropellant engine and three linear aerospikes (pressure-fed, electric pump-fed and gas-generator).
+- **Fifteen presets to start from**: Merlin 1D, F-1, J-2, RL10, Rutherford, a hydrolox expander (two turbopumps, and
+  one), hydrolox staged combustion, a hydrolox gas generator that exhausts into the nozzle, a tap-off cycle, a
+  pressure-fed hypergolic engine, a tripropellant engine and three linear aerospikes (pressure-fed, electric pump-fed
+  and gas-generator). Each is laid out like a stage: helium bottle and both tanks stacked on the centre line, the
+  engine below.
 - **Light it properly**: a cold-gas purge cloud, then start cartridge, helium spin start, TEA-TEB igniter (with its green
   flash) or a dead-head tank-pressure start.
   Valves have stroke times and the liquid in the lines has inertia, so slam a valve and you get water hammer.
@@ -442,6 +444,44 @@ copy target\release\rocket_sandbox.exe hotfire\Hotfire.exe
   level and lose Isp, just like the real ones; switch to Vacuum to see them at their best.
 - Views: **Flame** (default), Plain, Pressure, Velocity, Mach, Temperature, Density; optional tracer particles.
 
+## Stage layouts, the gas outlet, the tap-off engine and the start lamps
+
+- **The default engines are laid out like stages.** Every bell engine carries its helium bottle and both propellant
+  tanks stacked on the centre line above the engine. Hydrogen stages have the (much bigger) fuel tank on top, kerosene
+  stages the oxidiser. The lower tank feeds straight down; the upper tank's line goes behind the lower tank on the back
+  pipe layer.
+- **The J-2, Merlin 1D, F-1 and the exhaust-into-nozzle engine get their powerheads from the powerhead maker**, sized
+  for the real engine's chamber pressure and standing beside the chamber: pump-sized turbines behind a reducer and a
+  nozzle, valves on the generator's feeds, and the generator's gas held at temperature. The main oxidiser valve sits on
+  the injector head, where the real ones are. The Merlin now spins up on helium, as the real one does.
+  - Generator gas: J-2 6 kg/s (5% of the propellant, it was 17), Merlin 16 kg/s (6%), F-1 121 kg/s (5.5%).
+  - The oxidiser turbines of the expander, staged-combustion and RL10 engines are now a little wider than their pumps
+    (they were half as wide again, the RL10's four times), with no change in how the engines run.
+- **Gas outlet** (Plumbing; Back or Front layer only): a stretch of a gas line that lets its gas out into the open
+  cells of the engine plane in front of it, moving with whatever is flowing there. Draw a gas line (a pipe joined to
+  no tank) from somewhere under pressure, on the back layer, and paint its last stretch as outlets. Nothing sticks into
+  the stream.
+  - The exhaust-into-nozzle engine uses it: a box of pipe joints under the last turbine collects the exhaust, a
+    back-layer line takes it down beside the bell, and outlets along the inside of the niobium skirt, both sides, let
+    it out along the wall. The old slot faced across the main jet, whose ram pressure (about a quarter of the chamber
+    pressure) backed the turbines up. The engine now reaches 94 bar of its 100 bar design.
+  - Its skirt is a shallow cone (about 8 degrees) carrying on from the bell, not a second bell.
+- **Tap-off cycle** (new preset, J-2S / BE-3 style, RP-1/LOX): no gas generator. Hot gas is tapped from the main
+  chamber just under the injector face, along a niobium duct and through a nozzle onto the turbine of a one-shaft
+  turbopump, then dumped overboard. A start cartridge spins the pumps up; once the chamber is lit it drives its own
+  pumps. 60 bar, mixture 2.3, 0.45 MN. The duct, the turbine casing and its exhaust duct are niobium: the gas is
+  chamber gas, near 3000 K. The powerhead maker's part is used mirrored, with the turbine next to the chamber.
+- **Start lamps** (engine panel, under START): a row of lamps for what the start sequence is doing. Purge, prime, the
+  starter this engine has (cartridge, helium spin, tank head or motors), generator, oxidiser valves, igniter, flame,
+  main stage. Grey is not yet, blinking amber is in progress, green is done. Hover one for what the step is.
+- **Fixes to the simulation** found while rebuilding the engines:
+  - A half-open valve anywhere in a line held the liquid back everywhere in it, so the last injectors of a long line
+    could stay dry at ignition and melt. A valve now slows the liquid only while the front is going through it.
+  - A tank-head start waited for 70% of the rotor's rated speed, which a pump sized for a dense propellant never
+    reaches. It now also lets go at 70% of the governor's pressure.
+- Headless run (`--selftest`): `--cellpng FILE` saves the engine as built, `--probe X Y` prints the cells round a cell
+  and `--probet X Y` the temperatures along a row, `--phpng FILE` (with `--ph`) the powerhead maker's part.
+
 ## Pipes and containers
 - There is one **Pipe** part (plus generic **Valve**, **Pump**, **Injector**). A pipe holds whatever its
   network reaches: connect it to a fuel tank and it carries fuel, to an oxidiser tank and it carries
@@ -478,9 +518,9 @@ copy target\release\rocket_sandbox.exe hotfire\Hotfire.exe
 
   | Preset | Here (sea level) | Real |
   |---|---|---|
-  | **J-2** (Saturn V upper stages; LH2/LOX gas generator, two turbopumps, drive gas through the fuel turbine then the oxidiser turbine) | ~55 bar, O/F ~5.2, ~0.5 MN, pumps ~25,000 / ~9,000 rpm | 53 bar, O/F 5.5, 0.486 MN (1.03 MN vacuum), 27,000 / 8,600 rpm |
-  | **Merlin 1D** (Falcon 9; RP-1/LOX gas generator, one-shaft powerhead) | 98 bar, O/F 2.15, 0.77 MN | 97 bar, O/F 2.36, 0.845 MN |
-  | **F-1** (Saturn V first stage) | 61 bar, O/F 2.34, 5.8 MN, 5,630 rpm, 27 MW turbine | 70 bar, O/F 2.27, 6.77 MN, 5,500 rpm, 41 MW |
+  | **J-2** (Saturn V upper stages; LH2/LOX gas generator, two turbopumps, drive gas through the fuel turbine then the oxidiser turbine) | 51 bar, O/F 5.5, 0.44 MN, pumps 32,000 / 11,800 rpm | 53 bar, O/F 5.5, 0.486 MN (1.03 MN vacuum), 27,000 / 8,600 rpm |
+  | **Merlin 1D** (Falcon 9; RP-1/LOX gas generator, one-shaft powerhead) | 99 bar, O/F 2.36, 0.76 MN | 97 bar, O/F 2.36, 0.845 MN |
+  | **F-1** (Saturn V first stage) | 70 bar, O/F 2.27, 6.7 MN, 4,200 rpm, 29 MW turbine | 70 bar, O/F 2.27, 6.77 MN, 5,500 rpm, 41 MW |
 
   - **RL10** (Centaur upper stage), the classic expander. The jacket's warm hydrogen (about 145 K) is piped
     through both turbines; it's an 8 cm deep engine. Here: 36 bar, O/F 6.1, 67 kN at sea level, **79 kN and
@@ -506,7 +546,8 @@ copy target\release\rocket_sandbox.exe hotfire\Hotfire.exe
     feed-line friction scale with the cell size and depth, so a bigger drawing is bigger hardware.
   - In 2D the nozzles can't reach the real area ratios, so vacuum thrust in particular comes out lower than
     the real engines'.
-  - The F-1 dumps its turbine exhaust overboard here; the real one fed it into the nozzle extension.
+  - The F-1 dumps its turbine exhaust overboard here; the real one fed it into the nozzle extension (the
+    exhaust-into-nozzle preset shows how, with gas outlets along the skirt).
 - - **Merlin 1D and F-1** use one turbopump **powerhead** (like the textbook gas-generator cycle, or
   Merlin): oxidiser pump, turbine and fuel pump on one shaft, the gas generator bolted to the turbine and
   fed from both pump outlets through control valves, its exhaust driving the turbine and the turbine
