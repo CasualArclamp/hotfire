@@ -61,6 +61,7 @@ pub struct PhInput {
     pub steps: u32, // gas steps per frame (sets how fast a wheel can take gas in, see `expand`)
     pub p_exh: f32, // pressure the last wheel exhausts into, Pa (open air under the part, or a duct that holds it higher)
     pub tapoff: bool, // no generator: the turbine runs on hot gas tapped from the main chamber (one shaft)
+    pub expander: bool, // no generator: the fuel the cooling jacket has warmed runs through the turbines on its way to the injectors
 }
 
 impl PhInput {
@@ -79,6 +80,7 @@ impl PhInput {
             steps: st.steps_per_frame,
             p_exh: P_EXH,
             tapoff: false,
+            expander: false,
         }
     }
 }
@@ -281,7 +283,10 @@ pub fn size(i: &PhInput) -> PhSize {
     let mo = mdot - mf;
     // pump discharge: the gas pressure at the injectors plus a stiff 25% across them, and for the fuel another
     // 10% through the cooling jacket and lines
-    let p_dis_f = (LOCAL_F + 0.35) * i.pc;
+    // (an expander's fuel also has to get through the turbines: about 1.3 in pressure for each stage, two on the fuel
+    // shaft and one on the oxidiser's, or two on a shared shaft)
+    let exp_stages: &[i32] = if !i.expander { &[] } else if i.layout == Layout::Single || (i.layout == Layout::Auto && p.rho_o / p.rho_f <= 3.0) { &[2] } else { &[2, 1] };
+    let p_dis_f = (LOCAL_F + 0.35) * i.pc * 1.3f32.powi(exp_stages.iter().sum());
     let p_dis_o = (LOCAL_O + 0.30) * i.pc;
     let h_f = (p_dis_f - i.tank_p_f).max(0.2 * i.pc);
     let h_o = (p_dis_o - i.tank_p_o).max(0.2 * i.pc);
@@ -308,9 +313,11 @@ pub fn size(i: &PhInput) -> PhSize {
             ));
         }
     } else {
-        // one speed for both: between what each pump would like on its own
-        let (_, w_o) = lone_pump(1, p.rho_o, h_o, mo, dx);
-        let w = (w_f * w_o).sqrt();
+        // one speed for both: between what each pump would like on its own, nearer the one that takes more of the power
+        // (a hydrogen pump made to turn at an oxygen pump's speed is big, many-staged and wasteful)
+        let (op_alone, w_o) = lone_pump(1, p.rho_o, h_o, mo, dx);
+        let share = fp.power / (fp.power + op_alone.power).max(1.0);
+        let w = w_f.powf(share) * w_o.powf(1.0 - share);
         let fp = shaft_pump(0, p.rho_f, h_f, mf, w, dx);
         let op = shaft_pump(1, p.rho_o, h_o, mo, w, dx);
         if [&fp, &op].iter().any(|q| q.flow_ratio > 1.6 || q.flow_ratio < 0.6) {
@@ -376,6 +383,20 @@ pub fn size(i: &PhInput) -> PhSize {
     }
     let mut best: Option<(f32, Vec<i32>, Vec<Stage>)> = None;
     let mut over: Option<(f32, Vec<i32>, Vec<Stage>)> = None; // if nothing fits under the cap: the lowest pressure found
+    if i.expander {
+        // expander: no gas at all. Each wheel has the fuel line through it and takes what the warm fuel gives across its
+        // stages; what chamber pressure that reaches is the cooling jacket's doing, not the sizing's
+        let st: Vec<Stage> = wheels
+            .iter()
+            .zip(exp_stages)
+            .zip(&loads)
+            .map(|((wh, &n), &load)| {
+                let dh = p.cp_f * 150.0 * (1.0 - 1.3f32.powf(-0.29 * n as f32));
+                Stage { p_in: p_dis_f, p_out: p_dis_f / 1.3f32.powi(n), u_c0: wh.0 / (2.0 * dh).sqrt().max(1.0), stages: n, power: POWER_MARGIN * load }
+            })
+            .collect();
+        best = Some((0.0, vec![2; st.len()], st));
+    }
     if i.tapoff {
         // tap-off: the gas is the chamber's own, at the chamber's pressure and near its temperature, so the nozzle sets
         // only how much of it the wheel gets (a wheel with no generator ducted to it takes gas at half the speed): the
@@ -395,7 +416,7 @@ pub fn size(i: &PhInput) -> PhSize {
             }
         }
     }
-    for noz in if i.tapoff { vec![] } else { cands } {
+    for noz in if i.tapoff || i.expander { vec![] } else { cands } {
         let Some((m, st)) = solve(&noz) else { continue };
         if st[0].p_in <= p_cap {
             if best.as_ref().map_or(true, |b| m < 0.995 * b.0) {
@@ -441,13 +462,13 @@ pub fn size(i: &PhInput) -> PhSize {
     // the first nozzle holds it at
     let gg_of = p.of_opt * (-0.7 * (2.0 * ((p.t_peak - 800.0) / (t_gg - 800.0)).ln()).sqrt()).exp();
     let gg_p = NOZ_LOSS * stages[0].p_in;
-    if !i.tapoff && gg_p > 0.8 * p_dis_f.min(p_dis_o) {
+    if !i.tapoff && !i.expander && gg_p > 0.8 * p_dis_f.min(p_dis_o) {
         notes.push(format!(
             "The generator would have to run at {:.0} bar, too close to what the pumps deliver for its injectors to work: this engine wants a lower chamber pressure or a hotter generator.",
             gg_p / 1e5
         ));
     }
-    if !i.tapoff && gg_p < 8.0e5 {
+    if !i.tapoff && !i.expander && gg_p < 8.0e5 {
         notes.push(format!(
             "This engine needs so little drive gas that even a one-cell nozzle only holds the generator at {:.0} bar: a higher chamber pressure or a bigger throat makes better use of it.",
             gg_p / 1e5
@@ -460,7 +481,7 @@ pub fn size(i: &PhInput) -> PhSize {
     // (the oxidiser orifice a size over: the temperature control holds its valve at about 85% and has room to open)
     let gg_area_o = area(mo_gg, p.rho_o, p_dis_o - gg_p) / GG_TRIM_DESIGN;
     // (tap-off: there is no generator to feed or hold)
-    let (gg_area_f, gg_area_o, t_gg) = if i.tapoff { (0.0, 0.0, 0.0) } else { (gg_area_f, gg_area_o, t_gg) };
+    let (gg_area_f, gg_area_o, t_gg) = if i.tapoff || i.expander { (0.0, 0.0, 0.0) } else { (gg_area_f, gg_area_o, t_gg) };
     if shafts.iter().any(|s| s.speed_frac > 0.8) {
         notes.push("A rotor runs close to its tip-speed rating: a lower chamber pressure or a bigger throat gives more margin.".into());
     }
@@ -598,12 +619,24 @@ pub fn build_with(s: &PhSize, burner: bool, ox_valves: bool) -> (Clip, Vec<Port>
         }
         b.rect(x_end, cy - 1, xt - 1, *cy, c::SHAFT);
         // casing over the wheel's two ends: the gas gets in and out only through the nozzle above and the outlet below
-        steel(&mut b, xt - 2, cy - lo(*dt), xt - 1, cy - lo(*dt) + dt - 1);
-        steel(&mut b, xt + lt, cy - lo(*dt), xt + lt + 1, cy - lo(*dt) + dt - 1);
+        if !s.input.expander {
+            steel(&mut b, xt - 2, cy - lo(*dt), xt - 1, cy - lo(*dt) + dt - 1);
+            steel(&mut b, xt + lt, cy - lo(*dt), xt + lt + 1, cy - lo(*dt) + dt - 1);
+        }
     }
     // gas generator: injector head, chamber, reducer and nozzle in a thick steel body on top of the first wheel
     let tapoff = s.input.tapoff;
-    if !tapoff {
+    let expander = s.input.expander;
+    if expander {
+        // expander: no gas path. The warm fuel comes in at the top, runs through the first wheel, on down through the
+        // second (two shafts), and leaves at the bottom for the injectors
+        stub(&mut b, xc - 1, ty0 - 1, 0, -1, ty0 - 1);
+        if twin {
+            b.rect(xc - 1, by0 + 1, xc, ty1 - 1, c::PIPE);
+        }
+        stub(&mut b, xc - 1, tb + 1, 0, 1, h - 2 - tb);
+    }
+    if !tapoff && !expander {
         b.rect(cx0, yg, cx1, yg + 1, if burner { c::BURNER } else { c::GG });
         // its two feeds come up on the back layer and in through a valve each side of the head (the taps are upstream of
         // the main valves: without these the propellants would run through the generator as soon as the tanks are on)
@@ -622,12 +655,16 @@ pub fn build_with(s: &PhSize, burner: bool, ox_valves: bool) -> (Clip, Vec<Port>
         }
     }
     // (tap-off: just the nozzle through the casing, open on top for the duct from the chamber)
-    carve(&mut b, nx0, ty0 - 2, nx0 + n0 - 1, ty0 - 1);
-    if !tapoff {
+    if !expander {
+        carve(&mut b, nx0, ty0 - 2, nx0 + n0 - 1, ty0 - 1);
+    }
+    if !tapoff && !expander {
         steel(&mut b, cx0 - 5, yg - 2, cx1 + 5, ty0 - 1);
     }
-    steel(&mut b, xt0 - 2, ty0 - 2, xt0 + l0 + 1, ty0 - 1);
-    if twin {
+    if !expander {
+        steel(&mut b, xt0 - 2, ty0 - 2, xt0 + l0 + 1, ty0 - 1);
+    }
+    if twin && !expander {
         // between the wheels: collector, reducer, nozzle
         carve(&mut b, xt0, by0 + 1, xt0 + l0 - 1, by0 + coll);
         let toward = |from: i32, to: i32, step: i32| if to >= from { (from + step).min(to) } else { (from - step).max(to) };
@@ -639,9 +676,11 @@ pub fn build_with(s: &PhSize, burner: bool, ox_valves: bool) -> (Clip, Vec<Port>
         steel(&mut b, xt0.min(xt1) - 2, by0 + 1, (xt0 + l0).max(xt1 + l1) + 1, ty1 - 1);
     }
     // exhaust: straight down from the last wheel and out of the bottom edge
-    carve(&mut b, xtl, tb + 1, xtl + ll - 1, h - 1);
-    steel(&mut b, xtl - 1, tb + 1, xtl - 1, h - 1);
-    steel(&mut b, xtl + ll, tb + 1, xtl + ll, h - 1);
+    if !expander {
+        carve(&mut b, xtl, tb + 1, xtl + ll - 1, h - 1);
+        steel(&mut b, xtl - 1, tb + 1, xtl - 1, h - 1);
+        steel(&mut b, xtl + ll, tb + 1, xtl + ll, h - 1);
+    }
 
     let mut ports = vec![];
     // fuel: in through the top of the pump; out of its left end, past the generator tap, down the left
@@ -663,7 +702,7 @@ pub fn build_with(s: &PhSize, burner: bool, ox_valves: bool) -> (Clip, Vec<Port>
     b.rect(xfv, h - 12, xfv + 1, h - 11, c::VALVE_X);
     b.rect(xfv, h - 7, xfv + 1, h - 7, c::THROTTLE);
     ports.push(Port { name: "fuel out (to the cooling jacket)", x: xfv, y: h - 1 });
-    if !tapoff {
+    if !tapoff && !expander {
         b.rect(xj, cy0 - 1, xj + 1, cy0, c::JOINT);
         b.back_rect(xj, yg, xj + 1, cy0);
         b.back_rect(xj, yg, cx0 - 5, yg + 1);
@@ -682,7 +721,7 @@ pub fn build_with(s: &PhSize, burner: bool, ox_valves: bool) -> (Clip, Vec<Port>
         ports.push(Port { name: "oxidiser in", x: xom, y: 0 });
     }
     stub(&mut b, xom, ob + 1, 0, 1, h - 2 - ob);
-    if !tapoff {
+    if !tapoff && !expander {
         b.rect(xom, ob + 2, xom + 1, ob + 3, c::JOINT);
     }
     if ox_valves {
@@ -690,7 +729,7 @@ pub fn build_with(s: &PhSize, burner: bool, ox_valves: bool) -> (Clip, Vec<Port>
         b.rect(xom, ob + 10, xom + 1, ob + 10, c::THROTTLE);
     }
     ports.push(Port { name: "oxidiser out (to the injectors)", x: xom, y: h - 1 });
-    if !tapoff {
+    if !tapoff && !expander {
         b.back_rect(xom, ob + 2, xb + 1, ob + 3);
         b.back_rect(xb, yg, xb + 1, ob + 3);
         b.back_rect(cx1 + 5, yg, xb + 1, yg + 1);
@@ -699,17 +738,24 @@ pub fn build_with(s: &PhSize, burner: bool, ox_valves: bool) -> (Clip, Vec<Port>
     if tapoff {
         ports.push(Port { name: "drive gas in", x: nx0, y: ty0 - 2 });
     }
+    if expander {
+        ports.push(Port { name: "warm fuel in", x: xc - 1, y: 0 });
+        ports.push(Port { name: "fuel to the injectors", x: xc - 1, y: h - 1 });
+    }
     (b.clip(), ports)
 }
 
 /// Put the sizing into the engine settings: generator orifices and pressure, the pump governor and the
 /// start cartridge.
 pub fn apply(s: &PhSize, st: &mut Settings) {
-    st.gg_area_f = s.gg_area_f;
-    st.gg_area_o = s.gg_area_o;
-    st.gg_p = s.gg_p;
-    // the generator's oxidiser valve holds the gas at the temperature the turbines were sized for
-    st.gg_t_target = s.gg_t;
+    if !s.input.expander && !s.input.tapoff {
+        st.gg_area_f = s.gg_area_f;
+        st.gg_area_o = s.gg_area_o;
+        st.gg_p = s.gg_p;
+        // the generator's oxidiser valve holds the gas at the temperature the turbines were sized for
+        st.gg_t_target = s.gg_t;
+    }
+    // (with no generator, as in an expander or tap-off powerhead, the generator settings are left for any the player adds)
     st.feed_p_max = s.feed_p_max;
     st.cartridge_w = s.cartridge_w;
     // the throttle valves trim the mixture to the best ratio, whatever the lines lose

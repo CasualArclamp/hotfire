@@ -457,6 +457,15 @@ copy target\release\rocket_sandbox.exe hotfire\Hotfire.exe
   - Generator gas: J-2 6 kg/s (5% of the propellant, it was 17), Merlin 16 kg/s (6%), F-1 121 kg/s (5.5%).
   - The oxidiser turbines of the expander, staged-combustion and RL10 engines are now a little wider than their pumps
     (they were half as wide again, the RL10's four times), with no change in how the engines run.
+- **The expander engines have a powerhead from the maker too** (the hydrolox expander, its one-turbopump version and
+  the RL10). It stands beside the chamber with its turbines next to it. Each side of the cooling jacket ends in a
+  joint instead of its injector manifold; a collector on the back layer brings the warm hydrogen over to the top of the
+  first wheel, it runs down through the wheels (two shafts: fuel turbine, then oxidiser turbine), and comes back beside
+  the chamber into the injector manifolds. The pumps and wheels are sized by the maker, the fuel pump for the extra
+  pressure the turbines take. Hydrolox expander 65 bar (it was 66), RL10 42 bar (37; the real one 42), one-turbopump
+  expander 60 bar (72: the hand-tuned one did better).
+  - A shared shaft now turns nearer the speed of the pump that takes more of the power, which keeps a hydrogen pump
+    from being made big and slow to suit an oxygen pump. The F-1's generator gas falls from 121 to 100 kg/s for it.
 - **Gas outlet** (Plumbing; Back or Front layer only): a stretch of a gas line that lets its gas out into the open
   cells of the engine plane in front of it, moving with whatever is flowing there. Draw a gas line (a pipe joined to
   no tank) from somewhere under pressure, on the back layer, and paint its last stretch as outlets. Nothing sticks into
