@@ -477,7 +477,10 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
     let Mj = clamp(sqrt(max((pow(pt_pa, (gam - 1.0) / gam) - 1.0) / kg, 1.0)), 1.05, 6.0);
     // (the area ratio of the fully expanded jet to the exit: the width ratio in the planar simulation, its square for a round engine)
     let area_j = (mach / Mj) * pow((1.0 + kg * Mj * Mj) / (1.0 + kg * mach * mach), (gam + 1.0) / (2.0 * (gam - 1.0)));
-    let Dj = De * clamp(select(area_j, sqrt(area_j), (u32(anim[A_PLUME + 17u] + 0.5) & 1u) == 1u), 0.45, 2.5);
+    // (under-expanded, the simulation's jet swells nearly half as far again as the one-dimensional figure, its edges
+    // turning outward well past the mean: the drawn plume follows it)
+    let dj0 = select(area_j, sqrt(area_j), (u32(anim[A_PLUME + 17u] + 0.5) & 1u) == 1u);
+    let Dj = De * clamp(1.0 + (dj0 - 1.0) * select(1.0, 1.45, dj0 > 1.0), 0.45, 3.2);
     // Prandtl-Pack shock cell length, 1.306 Dj sqrt(Mj^2 - 1): 3 to 6 exit diameters for these nozzles, against about 1.5 in
     // photographs of real engines (hot, low-gamma exhaust and a non-uniform exit flow shorten the cells), so it is scaled
     // by 0.45 to match them, keeping the formula's trend with Mach number and pressure ratio.
@@ -505,6 +508,9 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
     // shock cells along the axis
     // (a well under-expanded plume has one long first cell and then fans out smoothly, it doesn't keep repeating)
     let under = clamp((ratio - 2.0) / 6.0, 0.0, 1.0);
+    // (and how far the jet is into blooming: from a third more pressure than the air, the exhaust swells out and its
+    // shock cells wash out, fully by three times the air's pressure)
+    let bloom = clamp((ratio - 1.3) / 1.7, 0.0, 1.0);
     // (real cells are about 1.3 jet diameters x sqrt(M^2 - 1) long, three diameters for a Mach 2.6 nozzle; they are drawn
     // closer together here so that several fit in the simulation's height)
     var Ls = hwj * (1.5 + 0.45 * mach) * (1.0 + 1.2 * under);
@@ -525,7 +531,8 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
         // the jet relaxes from the exit's width towards that of the fully expanded jet (narrower when over-expanded, wider when
         // under-expanded), and the cells swing about that, more the further the exhaust is from matched pressure
         let Rb = mix(hwj, 0.5 * Dj, 1.0 - exp(-sp / (1.2 * Ls))) + 0.012 * sp;
-        let amp6 = clamp(0.05 + 0.5 * abs(log(Dj / De)), 0.04, 0.4) * exp(-sp / (3.0 * Ls)) * (1.0 - 0.5 * sep) * mix(0.2, 1.0, ue);
+        // (well under-expanded, the jet blooms out once and fans away smoothly: the cells fade)
+        let amp6 = clamp(0.05 + 0.5 * abs(log(Dj / De)), 0.04, 0.4) * exp(-sp / (3.0 * Ls)) * (1.0 - 0.5 * sep) * mix(0.2, 1.0, ue) * (1.0 - 0.92 * bloom);
         R = max(Rb * (1.0 + amp6 * sin(ph)), 0.3 * hwj);
     }
     // turbulence: big slow eddies swing the plume sideways (more the further out), smaller ones tear its edge
@@ -571,7 +578,7 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
     // much of the plume's body shows (a darker body lets the diamonds stand out).
     let strength = clamp(0.25 + 0.6 * abs(lr), 0.0, 1.0);
     var cdk = exp(-sp / (Ls * mix(7.0, 1.0, under))) * (1.0 - 0.7 * under);
-    if (style == 6) { cdk = exp(-sp / (3.0 * Ls)) * smoothstep(1.1 * Lcore, 0.5 * Lcore, sp); }
+    if (style == 6) { cdk = exp(-sp / (3.0 * Ls)) * smoothstep(1.1 * Lcore, 0.5 * Lcore, sp) * (1.0 - 0.92 * bloom); }
     let beam = exp(-pow(q * 2.4, 2.0));
     var sh = 0.0;
     var shl = 0.0;
@@ -650,6 +657,9 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
     if (ratio > 3.0) {
         let dm = 0.67 * hw * sqrt(ratio);
         md = exp(-pow((sp - dm) / (0.15 * hw + 1.0), 2.0)) * smoothstep(0.6, 0.0, abs(dx) / (0.55 * R));
+        // (the photographed style has none: a jet that far under-expanded blooms out smoothly, and a lone white spot in the
+        // middle of it reads as a fault)
+        if (style == 6) { md = 0.0; }
     }
     sh = sh * 0.7;
     if (style == 6) {
