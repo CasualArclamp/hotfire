@@ -102,13 +102,13 @@ pub fn presets() -> Vec<EngineSpec> {
         liner: 2.0,
         jacket: 2.0,
         shell: 2.0,
-        fuel_tp: Some(TpSpec { pump_d: 24, stages: 2, turb_d: 24, turb_l: 20 }), // two-stage turbine: the hydrogen pump needs most of the power
-        ox_tp: Some(TpSpec { pump_d: 22, stages: 1, turb_d: 26, turb_l: 3 }), // (a wheel a little wider than its pump)
+        fuel_tp: Some(TpSpec { pump_d: 24, stages: 2, turb_d: 24, turb_l: 20 }), // (the powerhead maker sizes these)
+        ox_tp: Some(TpSpec { pump_d: 22, stages: 1, turb_d: 26, turb_l: 3 }),
         ox_tank_bottom: 25,
         fuel_tank: (6, 150, 30, 180),
         he: (170, 8, 200, 24),
-        inj: Some((0.95, 4.5)),
-        target_pc: 1.4e7,
+        inj: None,
+        target_pc: 6.5e6, // (what the jacket's heat carries it to)
         turb_mult: 14.0,
         cartridge_w: 2.0e7,
         gg_area: (0.5, 1.5),
@@ -973,6 +973,11 @@ impl World {
         self.rect(gx, ey + 2, dx0 + 3, ey + 4, c::EMPTY);
     }
 
+    /// An expander-cycle engine: turbopumps, a cooling jacket, and nothing else to drive them.
+    fn is_expander(e: &EngineSpec) -> bool {
+        !e.gg && !e.electric && !e.tapoff && !e.plug && e.fuel_tp.is_some() && e.ox_tp.is_some() && e.jacket > 0.0
+    }
+
     /// Tank rows of a stage: (upper tank, lower tank). Liquid hydrogen is so light that its tank is much the bigger.
     fn stage_tank_rows(e: &EngineSpec) -> (i32, i32) {
         let pr = &PROPS[e.prop.min(PROPS.len() - 1)];
@@ -1057,7 +1062,7 @@ impl World {
             prop: e.prop,
             pc: e.target_pc,
             throat_cells: 2.0 * e.throat_hw,
-            layout: if e.twin_shaft { Layout::Twin } else { Layout::Single },
+            layout: if e.twin_shaft || (Self::is_expander(e) && !e.single_shaft) { Layout::Twin } else { Layout::Single },
             t_gg: e.t_gg,
             dx: e.dx,
             depth: e.depth,
@@ -1067,14 +1072,16 @@ impl World {
             steps: self.st.steps_per_frame,
             p_exh: 1.5e5,
             tapoff: e.tapoff,
+            expander: Self::is_expander(e),
         };
+        let expander = inp.expander;
         // (exhaust into the nozzle: the last wheel exhausts against its collector, a few bar)
         let s = size(&PhInput { p_exh: if e.gg_dump == 1 { 3.0e5 } else { 1.5e5 }, ..inp });
         let (clip, ports) = build_with(&s, e.burner, false);
         let (pw, ph) = (clip.w as i32, clip.h as i32);
         let (ll, n_noz) = crate::powerhead::last_wheel(&s);
-        // a tap-off part goes down mirrored: its turbine next to the chamber, where the gas comes from
-        let mir = e.tapoff;
+        // a tap-off or expander part goes down mirrored: its turbines next to the chamber, where their gas or warm fuel comes from
+        let mir = e.tapoff || expander;
         let port_y = |name: &str| ports.iter().find(|p| p.name.starts_with(name)).map(|p| p.y).unwrap();
         let port = |name: &str| {
             let x = ports.iter().find(|p| p.name.starts_with(name)).map(|p| p.x).unwrap();
@@ -1094,7 +1101,9 @@ impl World {
         }
         let ex = port("turbine exhaust");
         let gx = (cx + e.exit_hw) as i32; // first column right of the exit's gas
-        px = px.max(if e.gg_dump == 1 { gx + 22 - ex } else { gx + l3 as i32 + 8 - ex });
+        if !expander {
+            px = px.max(if e.gg_dump == 1 { gx + 22 - ex } else { gx + l3 as i32 + 8 - ex });
+        }
         for k in 0..clip.w * clip.h {
             let kx = (k % clip.w) as i32;
             let (x, y) = (px + if mir { pw - 1 - kx } else { kx }, py + (k / clip.w) as i32);
@@ -1132,6 +1141,33 @@ impl World {
             back.push((j0, 69, 158, 70));
             back.push((157, 60, 158, 70));
             back.push((155, 60, 158, 60));
+        }
+        if expander {
+            // Expander plumbing. Each side of the cooling jacket is cut off from its injector manifold and ends in a joint;
+            // a collector on the back layer joins the two and brings the warm fuel over to the top of the first wheel. From
+            // the bottom of the last wheel it comes back beside the chamber into the right-hand manifold, and behind the
+            // oxidiser manifold to the left-hand one.
+            let cw = (cx + e.ch_hw) as i32; // first wall column right of the chamber's gas
+            let (r0, r1) = (cw + e.liner as i32, cw + (e.liner + e.jacket) as i32 - 1);
+            let (l0, l1) = (255 - r1, 255 - r0);
+            for (a, b2) in [(l0, l1), (r0, r1)] {
+                self.rect(a, 61, b2, 61, c::STEEL);
+                self.rect(a, 62, b2, 63, c::JOINT);
+                back.push((a, py, b2, 63));
+            }
+            let xw = px + port("warm fuel in");
+            self.rect(xw, py, xw + 1, py + 1, c::JOINT);
+            back.push((l0, py, xw + 1, py + 1));
+            let xr = px + port("fuel to the injectors");
+            let yb = py + ph - 1;
+            let xret = xj + 4;
+            self.rect(xr, yb, xr + 1, yb + 2, c::PIPE);
+            self.rect(xret, yb + 1, xr + 1, yb + 2, c::PIPE);
+            self.rect(xret, 60, xret + 1, yb + 2, c::PIPE);
+            self.rect(cw + l3 as i32, 60, xret + 1, 60, c::PIPE);
+            self.cells[World::idx(108, 60)] = c::JOINT;
+            self.cells[World::idx(147, 60)] = c::JOINT;
+            back.push((108, 60, 147, 60));
         }
         // inlets: straight up to the tank stack
         for (name, to) in [("fuel in", &mut feeds.fuel), ("oxidiser in", &mut feeds.ox)] {
@@ -1900,6 +1936,9 @@ impl World {
             };
             s.gg_area_f = e.gg_area.0;
             s.gg_area_o = e.gg_area.1;
+            // (a powerhead from the maker sets these for itself further down; nothing of the last engine's is left behind)
+            s.gg_p = Settings::default().gg_p;
+            s.gg_t_target = 0.0;
             s.tank_p_f = e.tank_p.0;
             s.tank_p_o = e.tank_p.1;
             s.throat_cells = 2.0 * e.throat_hw;
@@ -1976,7 +2015,7 @@ impl World {
         let stage = e.stage && !e.plug;
         let back: Vec<(i32, i32, i32, i32)> = if let Some(b) = plug_back {
             b
-        } else if stage && ((e.gg && e.gg_dump != 2) || e.tapoff) && (e.single_shaft || e.twin_shaft) {
+        } else if stage && (((e.gg && e.gg_dump != 2) || e.tapoff) && (e.single_shaft || e.twin_shaft) || Self::is_expander(e)) {
             let (b, s) = self.maker_layout(e, &hw, &mut feeds, &mut front);
             maker = Some(s);
             b
@@ -2329,9 +2368,14 @@ impl World {
         }
         if let Some(s) = &maker {
             // the powerhead maker's settings: generator orifices, pressure and temperature hold, governor, mixture control
-            let (cart, mix) = (self.st.cartridge_w, self.st.mix_target);
+            let (cart, mix, gg_p) = (self.st.cartridge_w, self.st.mix_target, self.st.gg_p);
             crate::powerhead::apply(s, &mut self.st);
-            self.st.cartridge_w = cart.max(s.cartridge_w);
+            // (an expander's light rotors want no more start cartridge than the maker reckons; and with no generator there is
+            // no generator pressure to set)
+            self.st.cartridge_w = if s.input.expander { cart.min(s.cartridge_w) } else { cart.max(s.cartridge_w) };
+            if s.input.expander || s.input.tapoff {
+                self.st.gg_p = gg_p;
+            }
             if mix > 0.0 {
                 self.st.mix_target = mix;
             }
