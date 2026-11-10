@@ -204,14 +204,16 @@ fn flame(i: u32, ix: u32, iy: u32, rho: f32, T: f32, vel: vec2<f32>, cf: vec2<f3
     let blob = fbm(vec2<f32>(across * 0.09, (along - drift) * 0.025));
     let fine = fbm(vec2<f32>(across * 0.2 + 7.0, (along - drift * 1.4) * 0.07));
     let tongues = 0.65 * blob + 0.35 * fine;
-    em = em * (0.2 + 1.2 * tongues);
+    // flat colour, as a real exhaust photographs: an even glow that follows the temperature, with only a breath of the
+    // moving texture left in it (it used to swing the brightness from a fifth to nearly one and a half)
+    em = em * (0.74 + 0.12 * tongues);
     // shock diamonds still light up where the gas compresses
     if (iy > 0u && iy + 1u < r.h) {
         let up = gas_rho(i - r.w);
         let dn = gas_rho(i + r.w);
         if (up > 0.0 && dn > 0.0) {
             let comp = clamp((dn - up) / rho * 1.2, 0.0, 1.0);
-            em = em + vec3<f32>(1.0, 0.85, 0.5) * comp * smoothstep(900.0, 2000.0, T) * 0.4;
+            em = em + vec3<f32>(1.0, 0.92, 0.8) * comp * smoothstep(900.0, 2000.0, T) * 0.6;
         }
     }
     // gas that isn't burning is smoke, drawn like the flame: soft wisps carried along with the flow.
@@ -231,7 +233,7 @@ fn flame(i: u32, ix: u32, iy: u32, rho: f32, T: f32, vel: vec2<f32>, cf: vec2<f3
     let body = mix(0.35, 0.95, soot); // how solid the smoke is
     let alpha = clamp(amount * (body + mix(1.1, 0.6, soot) * (wisp - 0.5)), 0.0, 1.0);
     let cold = tint * alpha * 0.8;
-    let burning = smoothstep(550.0, 1000.0, T * (0.85 + 0.3 * blob)); // (the big slow noise only: the fine one speckles gas that is only warm) // ragged edge: flame licks out past the hot core. Gas from ~550 K glows (dull red at gas-generator temperatures)
+    let burning = smoothstep(550.0, 1000.0, T * (0.97 + 0.06 * blob)); // (the big slow noise only: the fine one speckles gas that is only warm) // ragged edge: flame licks out past the hot core. Gas from ~550 K glows (dull red at gas-generator temperatures)
     return mix(cold, em, burning);
 }
 
