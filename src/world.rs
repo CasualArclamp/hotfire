@@ -2818,6 +2818,21 @@ impl World {
                 }
                 self.phase[i] = best;
             }
+            // (a cell of the block that does not itself touch its line, a fuel cell under the oxidiser manifold, say, is fed
+            // through the block from the nearest cell that does: that many cells further along)
+            let fed: Vec<(usize, f32)> = self.nets[n].injectors.iter().map(|&(i, _)| i).filter(|&i| self.cells[i] == c::AINJ && self.phase[i] < DRY).map(|i| (i, self.phase[i])).collect();
+            for k in 0..self.nets[n].injectors.len() {
+                let i = self.nets[n].injectors[k].0;
+                if self.cells[i] != c::AINJ || self.phase[i] < DRY {
+                    continue;
+                }
+                let (x, y) = ((i % W) as i32, (i / W) as i32);
+                if let Some(best) = fed.iter().map(|&(j, ph)| ph + (((j % W) as i32 - x).abs() + ((j / W) as i32 - y).abs()) as f32).min_by(|a, b| a.total_cmp(b)) {
+                    self.phase[i] = best;
+                    // (the liquid front has to be able to get that far)
+                    self.nets[n].max_phase = self.nets[n].max_phase.max(best);
+                }
+            }
         }
         for s in &mut self.shafts {
             for p in &mut s.pumps {
@@ -3207,9 +3222,23 @@ impl World {
             }
             (l > 0 && r + 1 < W && r - l <= 400).then_some((l, r))
         };
+        // (one chamber, two nozzles: the engine's own centre line, where the walk came to the wedge between them)
+        let mut twin_axis: Option<f32> = None;
         for y in y0..H {
             if self.cells[Self::idx(xc, y)] != c::EMPTY {
-                break;
+                // solid on the centre line under a wider passage: a wedge splitting the chamber into two nozzles? Then the
+                // walk carries on down the left-hand one (the plume shader draws the other as its mirror image)
+                let split = match last {
+                    Some((pl, pr, py)) if twin_axis.is_none() && py + 1 == y && pr - pl > 20 => (pl..xc).find(|&x| self.cells[Self::idx(x, y)] == c::EMPTY).map(|x| (x, (pl + pr) as f32 * 0.5 + 0.5)),
+                    _ => None,
+                };
+                match split {
+                    Some((x, axis)) => {
+                        twin_axis = Some(axis);
+                        xc = x;
+                    }
+                    None => break,
+                }
             }
             // open to the side here, or suddenly much wider than the row above (a duct leading off through the wall, as a
             // tap-off engine has). A hole burnt or knocked through the wall is not the end of the nozzle either: if the
@@ -3252,7 +3281,7 @@ impl World {
         // slots, either side of its spike), there is no such nozzle, and the simulation's own picture is left to show
         if let Some(n) = self.nets.iter().filter(|n| n.prop != PROP_HE).max_by_key(|n| n.injectors.len()) {
             let mean = n.injectors.iter().map(|&(_, g)| (g % W) as f32 + 0.5).sum::<f32>() / n.injectors.len().max(1) as f32;
-            if (mean - xcf).abs() > 0.5 * hw + 3.0 {
+            if (mean - twin_axis.unwrap_or(xcf)).abs() > 0.5 * hw + 3.0 {
                 return out;
             }
         }
@@ -3286,7 +3315,9 @@ impl World {
         // at that row, narrower than the exit. The pressure at each row comes from the bell's own contour (area ratio: the width ratio in the planar
         // simulation, its square for a round engine) and the chamber pressure.
         out[15] = hw;
-        out[17] = self.st.axi as u8 as f32;
+        // (flags in the low four bits: 1 a round engine, 2 an aerospike, 4 two nozzles; above them, for two nozzles, sixteen
+        // times the column of the engine's centre line, about which the second nozzle mirrors the first)
+        out[17] = self.st.axi as u8 as f32 + twin_axis.map_or(0.0, |a| 4.0 + 16.0 * (a * 2.0).round() * 0.5);
         let (pt, pa) = (self.g.chamber_p, self.st.amb_p);
         let nrows = noz.len() / 2;
         if pt > 5.0e4 && pa > 1.0e3 && nrows >= 15 && throat_y >= y0 && throat_y - y0 < nrows {
@@ -3421,7 +3452,7 @@ impl World {
     /// Where the jet stabiliser starts: below the exit of the bell the plume code found, or, for an engine with no bell to find (an
     /// aerospike), below the tip of the spike down the middle of its injectors, with the span of the injectors as the width.
     pub fn find_stab_geom(&self) -> Option<(f32, f32)> {
-        if self.plume[0] > 0.5 && self.plume[17] < 1.5 {
+        if self.plume[0] > 0.5 && (self.plume[17] as u32 & 2) == 0 {
             return Some((self.plume[2], self.plume[3]));
         }
         let n = self.nets.iter().filter(|n| n.prop != PROP_HE).max_by_key(|n| n.injectors.len())?;

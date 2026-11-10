@@ -63,6 +63,7 @@ pub struct EngineSpec {
     pub mix: f32,        // mixture ratio the throttle valves hold (0: the layout's own rule)
     pub t_gg: f32,       // turbine drive gas temperature the powerhead maker sizes the generator for, K
     pub tapoff: bool,    // tap-off cycle: no generator, the turbine runs on hot gas ducted from the main chamber
+    pub twin_noz: f32,   // one chamber, two nozzles: each nozzle's centre line this many cells either side of the engine's (0: one nozzle)
 }
 
 /// Where a layout wants its propellants delivered: the columns (two cells wide) of its fuel and oxidiser inlet pipes at
@@ -87,6 +88,7 @@ pub fn presets() -> Vec<EngineSpec> {
         mix: 0.0,
         t_gg: 1000.0,
         tapoff: false,
+        twin_noz: 0.0,
         name: "Hydrolox expander",
         blurb: "LH2/LOX, regen jacket heat drives two turbopumps (RL10 / RS-25 style), big vacuum bell",
         prop: 0,
@@ -150,6 +152,7 @@ pub fn presets() -> Vec<EngineSpec> {
         mix: 2.36,
         t_gg: 900.0,
         tapoff: false,
+        twin_noz: 0.0,
         name: "Merlin 1D",
         blurb: "Falcon 9 first stage (SpaceX Merlin 1D): RP-1/LOX gas generator, one turbopump powerhead (oxidiser pump, turbine, fuel pump on one shaft), generator exhaust dumped overboard, regen-cooled. Real: 97 bar, mixture 2.36, 845 kN at sea level, Isp 282 s; throttles to about 57%.",
         prop: 2,
@@ -198,6 +201,7 @@ pub fn presets() -> Vec<EngineSpec> {
         mix: 0.0,
         t_gg: 1000.0,
         tapoff: false,
+        twin_noz: 0.0,
         name: "Hypergolic pressure-fed",
         blurb: "MMH/N2O4 (AJ10 / OMS style): helium-pressurised tanks, no pumps, ablative ceramic chamber, long nozzle",
         prop: 3,
@@ -439,7 +443,23 @@ pub fn presets() -> Vec<EngineSpec> {
         cartridge_w: 1.5e7,
         ..kerolox.clone()
     };
-    vec![hydrolox, hydrolox_gg, kerolox, hypergolic, dump_to_nozzle, staged, f1, rl10, rutherford, tripropellant, aerospike, aerospike_pumped, aerospike_gg, hydrolox_exp1, tapoff]
+    // One chamber, two nozzles: a wide combustion chamber whose floor is split by a cooled wedge into two throats, each with
+    // its own bell. One turbopump and one injector head feed both.
+    let twin_nozzle = EngineSpec {
+        name: "Twin-nozzle engine",
+        blurb: "One combustion chamber, two nozzles: a wide chamber whose floor is split by a regen-cooled wedge into two throats, each with its own bell, on RP-1/LOX. One gas-generator turbopump from the powerhead maker and one injector head (fuel and oxidiser from alternate injectors right across the face) feed both. Two small bells in place of one big one make a shorter engine for the same thrust",
+        twin_noz: 35.0,
+        ch_hw: 37.0,
+        conv_start: 68.0, // (a long, gentle convergence: any steeper and the cooling jacket's cells no longer touch row to row)
+        throat_y: 122.0,
+        throat_hw: 6.0,
+        exit_y: 225.0,
+        exit_hw: 26.0,
+        target_pc: 6.0e6,
+        mix: 2.36,
+        ..kerolox.clone()
+    };
+    vec![hydrolox, hydrolox_gg, kerolox, hypergolic, dump_to_nozzle, staged, f1, rl10, rutherford, tripropellant, aerospike, aerospike_pumped, aerospike_gg, hydrolox_exp1, tapoff, twin_nozzle]
 }
 
 fn hydrolox_clone() -> EngineSpec {
@@ -456,6 +476,7 @@ fn presets_base() -> EngineSpec {
         mix: 0.0,
         t_gg: 1000.0,
         tapoff: false,
+        twin_noz: 0.0,
         name: "",
         blurb: "",
         prop: 0,
@@ -1061,7 +1082,7 @@ impl World {
         let inp = PhInput {
             prop: e.prop,
             pc: e.target_pc,
-            throat_cells: 2.0 * e.throat_hw,
+            throat_cells: 2.0 * e.throat_hw * if e.twin_noz > 0.0 { 2.0 } else { 1.0 },
             layout: if e.twin_shaft || (Self::is_expander(e) && !e.single_shaft) { Layout::Twin } else { Layout::Single },
             t_gg: e.t_gg,
             dx: e.dx,
@@ -1094,13 +1115,14 @@ impl World {
         // (and of the bell, as far down as its lines go), and its exhaust clear of the bell's rim
         let py = if e.tapoff { 70 - port_y("drive gas in") } else { 44 };
         feeds.top = 40;
-        let xj = (cx + e.ch_hw + l3) as i32 + 2; // the oxidiser's joint column beside the chamber
+        let off = e.twin_noz; // (two nozzles: everything outboard is that much further from the centre line)
+        let xj = (cx + off + e.ch_hw + l3) as i32 + 2; // the oxidiser's joint column beside the chamber
         let mut px = xj + 6;
         for y in 58..py + ph + 8 {
-            px = px.max((cx + hw(y as f32 + 0.5) + l3).ceil() as i32 + 6);
+            px = px.max((cx + off + hw(y as f32 + 0.5) + l3).ceil() as i32 + 6);
         }
         let ex = port("turbine exhaust");
-        let gx = (cx + e.exit_hw) as i32; // first column right of the exit's gas
+        let gx = (cx + off + e.exit_hw) as i32; // first column right of the exit's gas
         if !expander {
             px = px.max(if e.gg_dump == 1 { gx + 22 - ex } else { gx + l3 as i32 + 8 - ex });
         }
@@ -1194,8 +1216,15 @@ impl World {
         self.rect(xf, yb, xf + 1, yb + 1, c::JOINT);
         let ey = e.exit_y as i32;
         let yf = ey - 3;
-        let h = hw(yf as f32 + 0.5);
+        let h = off + hw(yf as f32 + 0.5);
         let tx = (cx - (h + e.liner + e.jacket * 0.5)).floor() as i32; // outer jacket column on the left
+        if off > 0.0 {
+            // (two nozzles: the jackets on the two sides of the wedge are joined across the gap between the bells, and tied
+            // into the ring through a joint there)
+            let (i0, i1) = (2 * (128 - off as i32) - 1 - tx, tx + 2 * off as i32);
+            self.rect(i0, yf, i1, yf + 1, c::PIPE);
+            self.rect(127, yf, 128, yf + 1, c::JOINT);
+        }
         let mt = 255 - tx;
         self.rect(mt, yf, mt + 3, yf + 1, c::PIPE);
         self.rect(mt + 2, yf, mt + 3, yf + 1, c::JOINT);
@@ -1941,7 +1970,7 @@ impl World {
             s.gg_t_target = 0.0;
             s.tank_p_f = e.tank_p.0;
             s.tank_p_o = e.tank_p.1;
-            s.throat_cells = 2.0 * e.throat_hw;
+            s.throat_cells = 2.0 * e.throat_hw * if e.twin_noz > 0.0 { 2.0 } else { 1.0 };
             s.dx = e.dx;
             s.depth = e.depth;
             s.axi = false;
@@ -1969,10 +1998,13 @@ impl World {
             None
         };
         if !e.plug {
+        // (two nozzles: the same contour about each nozzle's own centre line. Where the two overlap, at the top, they are
+        // one chamber; below, the wall between them is the wedge that splits the flow, lined and jacketed like the rest)
+        let off = e.twin_noz;
         for y in 58..=e.exit_y as usize {
             let h = hw(y as f32 + 0.5);
             for x in 0..W {
-                let d = (x as f32 + 0.5 - cx).abs();
+                let d = ((x as f32 + 0.5 - cx).abs() - off).abs();
                 let v = if d < h {
                     c::EMPTY
                 } else if d < h + l1 {
@@ -1988,10 +2020,21 @@ impl World {
             }
         }
         // injector head: cap, oxidiser manifold in the middle, fuel manifolds either side
-        self.rect(100, 58, 155, 59, c::STEEL);
-        for x in 100..=155usize {
+        let ext = if off > 0.0 { (off + e.ch_hw - 22.0) as i32 } else { 0 }; // (a twin-nozzle chamber is that much wider each side)
+        self.rect(100 - ext, 58, 155 + ext, 59, c::STEEL);
+        for x in (100 - ext) as usize..=(155 + ext) as usize {
             let d = (x as f32 + 0.5 - cx).abs();
             let left = (x as f32 + 0.5) < cx;
+            if off > 0.0 {
+                // one wide chamber: the oxidiser manifold in the middle, fuel either side as usual, and under them a row
+                // of alternating injectors right across the face, so fuel and oxidiser meet everywhere and not just in
+                // the middle of a chamber this wide
+                self.cells[World::idx(x, 60)] = if d < 5.0 || d >= 6.0 { c::PIPE } else { c::STEEL };
+                if d < off + e.ch_hw {
+                    self.cells[World::idx(x, 61)] = c::AINJ;
+                }
+                continue;
+            }
             let (m, inj) = if d < 5.0 {
                 (c::PIPE, c::INJ)
             } else if d < 6.0 {
