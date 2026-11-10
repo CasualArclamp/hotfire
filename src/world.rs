@@ -3204,7 +3204,7 @@ impl World {
         if let Some(g) = self.spike_geom() {
             return self.spike_plume(rb, g);
         }
-        let (mut xc, y0) = (gc % W, gc / W);
+        let (mut xc, mut y0) = (gc % W, gc / W);
         let mut last: Option<(usize, usize, usize)> = None;
         let mut rows = 0;
         let (mut throat_w, mut throat_y) = (usize::MAX, 0usize);
@@ -3269,6 +3269,17 @@ impl World {
                 noz.push(r as f32);
             }
             xc = (l + r) / 2;
+        }
+        // The walk straight down did not come out of a nozzle (the chamber has a floor, say, and its gas leaves by ducts to
+        // nozzles elsewhere): look for the exits by following the gas path instead, wherever it leads, and take the
+        // left-most; if there are two alike, the other is drawn as its mirror image.
+        if last.map_or(true, |(l, r, y)| rows < 15 || y + 1 >= H || self.cells[Self::idx((l + r) / 2, y + 1)] != c::EMPTY) {
+            let Some((exit, axis, top, _, t_y)) = self.find_exits_by_flood(gc, noz) else { return out };
+            last = Some(exit);
+            twin_axis = axis;
+            y0 = top;
+            rows = exit.2 + 1 - top;
+            throat_y = t_y;
         }
         let Some((l, r, y)) = last else { return out };
         if rows < 15 || y + 1 >= H {
@@ -3340,6 +3351,89 @@ impl World {
             }
         }
         out
+    }
+
+    /// Nozzle exits found by flooding the walled-in gas from a chamber cell: every row of gas shut in between walls on both
+    /// sides, joined to the start. An exit is a run of such cells with open gas under it. Returns the left-most exit
+    /// (first column, last column, row), the centre line to mirror it about when there are exactly two exits alike, the
+    /// top row of that exit's nozzle, and its throat (width, row); `noz` gets the nozzle's rows from that top row down.
+    fn find_exits_by_flood(&self, start: usize, noz: &mut Vec<f32>) -> Option<((usize, usize, usize), Option<f32>, usize, usize, usize)> {
+        let span = |x: usize, y: usize| -> Option<(usize, usize)> {
+            if self.cells[Self::idx(x, y)] != c::EMPTY {
+                return None;
+            }
+            let (mut l, mut r) = (x, x);
+            while l > 0 && self.cells[Self::idx(l - 1, y)] == c::EMPTY {
+                l -= 1;
+            }
+            while r + 1 < W && self.cells[Self::idx(r + 1, y)] == c::EMPTY {
+                r += 1;
+            }
+            (l > 0 && r + 1 < W && r - l <= 400).then_some((l, r))
+        };
+        let mut seen = std::collections::HashSet::new();
+        let mut inside = std::collections::HashSet::new();
+        let mut stack = vec![start];
+        seen.insert(start);
+        while let Some(i) = stack.pop() {
+            let (x, y) = (i % W, i / W);
+            if span(x, y).is_none() {
+                continue;
+            }
+            inside.insert(i);
+            if inside.len() > 60000 {
+                return None;
+            }
+            for (nx, ny) in [(x, y + 1), (x, y.wrapping_sub(1)), (x.wrapping_sub(1), y), (x + 1, y)] {
+                if nx < W && ny < H {
+                    let j = Self::idx(nx, ny);
+                    if self.cells[j] == c::EMPTY && seen.insert(j) {
+                        stack.push(j);
+                    }
+                }
+            }
+        }
+        // exit cells: walled-in gas with open gas straight below it
+        let mut cells: Vec<(usize, usize)> = inside.iter().map(|&i| (i / W, i % W)).filter(|&(y, x)| y + 1 < H && self.cells[Self::idx(x, y + 1)] == c::EMPTY && !inside.contains(&Self::idx(x, y + 1))).collect();
+        cells.sort_unstable();
+        let mut exits: Vec<(usize, usize, usize)> = vec![];
+        for (y, x) in cells {
+            match exits.last_mut() {
+                Some(e) if e.2 == y && e.1 + 1 == x => e.1 = x,
+                _ => exits.push((x, x, y)),
+            }
+        }
+        exits.retain(|e| e.1 - e.0 >= 6);
+        exits.sort_unstable();
+        let &(l, r, y) = exits.first()?;
+        let axis = match exits[..] {
+            [a, b] if a.2 == b.2 && (a.1 - a.0).abs_diff(b.1 - b.0) <= 2 => Some((a.0 + a.1 + b.0 + b.1) as f32 * 0.25 + 0.5),
+            _ => None,
+        };
+        // back up this exit's nozzle: row by row while it stays a walled passage that does not suddenly widen (where the
+        // duct or the chamber comes in)
+        let mut rows: Vec<(usize, usize)> = vec![(l, r)];
+        let (mut xc, mut yy) = ((l + r) / 2, y);
+        let (mut t_w, mut t_y) = (r - l, y);
+        while yy > 0 {
+            let Some((a, b)) = span(xc, yy - 1) else { break };
+            let (pl, pr) = *rows.last().unwrap();
+            if b - a > (pr - pl) * 3 / 2 + 12 {
+                break;
+            }
+            yy -= 1;
+            rows.push((a, b));
+            if b - a < t_w {
+                (t_w, t_y) = (b - a, yy);
+            }
+            xc = (a + b) / 2;
+        }
+        noz.clear();
+        for &(a, b) in rows.iter().rev().take(NOZ_ROWS) {
+            noz.push(a as f32);
+            noz.push(b as f32);
+        }
+        Some(((l, r, y), axis, yy, t_w, t_y))
     }
 
     /// An aerospike's geometry, if the engine is one: injectors on both sides of a spike (the axis between them has solid cells

@@ -470,12 +470,13 @@ copy target\release\rocket_sandbox.exe hotfire\Hotfire.exe
   expander 60 bar (72: the hand-tuned one did better).
   - A shared shaft now turns nearer the speed of the pump that takes more of the power, which keeps a hydrogen pump
     from being made big and slow to suit an oxygen pump. The F-1's generator gas falls from 121 to 100 kg/s for it.
-- **Twin-nozzle engine** (new preset, RP-1/LOX): one wide combustion chamber whose floor is split by a regen-cooled
-  wedge into two throats, each with its own bell. One gas-generator turbopump from the powerhead maker and one
-  injector head feed both; the head is a row of alternating injectors, so fuel and oxidiser meet right across the wide
-  face. 57 bar, mixture 2.36, 0.8 MN.
-  - The stylised plume draws both exhausts: the world follows the left-hand nozzle and the shader mirrors it about the
-    engine's centre line. This works for any engine you build with one chamber and two matching nozzles.
+- **Twin-nozzle engine** (new preset, RP-1/LOX): one small combustion chamber under one injector head, a hot-gas duct
+  out of each side, and each duct turning down into its own throat and bell. The chamber, the ducts and both nozzles
+  are regen-cooled as one jacket, fed from the ring at the bottom of the bells. One gas-generator turbopump from the
+  powerhead maker feeds it.
+  - The stylised plume draws both exhausts. When there is no nozzle straight under the chamber, the plume finder
+    follows the gas out through the ducts, finds the exits and takes the left-hand one; with two exits alike, the
+    shader draws the other as its mirror image. This works for engines you build this way too.
   - Alternating injectors are fixed along the way: a cell that does not itself touch its line (a fuel cell under the
     oxidiser manifold) used to stay dry, and injector sizing did not count alternating injectors at all.
 - **Gas outlet** (Plumbing; Back or Front layer only): a stretch of a gas line that lets its gas out into the open

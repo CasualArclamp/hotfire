@@ -1571,24 +1571,21 @@ he_setpoint 2500000
         w.load_preset(15);
         open_all(&mut w);
         run(&mut w, 4.0);
-        // one injector face of alternating injectors, half its cells on each line, every one of them reached by its line
+        // one injector head, both lines reaching it, nothing mixed, the whole jacket one fuel line
         let (f, o) = (w.nets.iter().find(|n| n.prop == 0 && !n.injectors.is_empty()).unwrap(), w.nets.iter().find(|n| n.prop == 1 && !n.injectors.is_empty()).unwrap());
-        assert_eq!(f.injectors.len(), o.injectors.len());
-        assert!(f.injectors.len() > 50, "{} fuel injectors", f.injectors.len());
-        for n in [f, o] {
-            let bad: Vec<(usize, f32)> = n.injectors.iter().filter(|&&(i, _)| w.cells[i] != c::AINJ || w.phase[i] > n.max_phase + 1.0).map(|&(i, _)| (i % W, w.phase[i])).collect();
-            assert!(bad.is_empty(), "injectors their line (prop {}, reach {}) cannot get to: {:?}", n.prop, n.max_phase, &bad[..bad.len().min(6)]);
-        }
+        assert!(f.injectors.len() >= 10 && o.injectors.len() >= 8, "{} fuel and {} oxidiser injectors", f.injectors.len(), o.injectors.len());
         assert!(w.mixed.is_none());
-        // the plume finder follows the left-hand nozzle down past the wedge and reports the engine's centre line, about which
-        // the second plume is drawn as its mirror image
+        assert!(!w.nets.iter().any(|n| n.prop == 255 && n.lines.len() > 20), "a stretch of the cooling jacket no line reaches");
+        // the plume finder gets no nozzle straight under the chamber (it has a floor): it follows the gas out through the
+        // ducts, finds the two exits, takes the left-hand one and reports the centre line to mirror the other about
         assert!(w.plume[0] > 0.5, "nozzle exit found");
         let flags = w.plume[17] as u32 & 15;
         let axis = (w.plume[17] - flags as f32) / 16.0;
         assert_eq!(flags & 4, 4, "two nozzles");
         let centre = crate::presets::PRESET_OX as f32 + 128.0;
         assert!((axis - centre).abs() < 1.0, "axis {axis}, engine centre {centre}");
-        assert!(w.plume[1] < axis - 20.0 && w.plume[3] > 20.0 && w.plume[3] < 32.0, "left nozzle at {} half width {}", w.plume[1], w.plume[3]);
+        assert!((w.plume[1] - (centre - 40.0)).abs() < 1.5 && (w.plume[3] - 20.0).abs() < 1.5, "left nozzle at {} half width {}", w.plume[1], w.plume[3]);
+        assert!(w.plume[9] > w.plume[12] && w.plume[9] < w.plume[2], "throat row {} between the top of the leg {} and the exit {}", w.plume[9], w.plume[12], w.plume[2]);
         // a one-nozzle engine has no such flag
         w.load_preset(2);
         run(&mut w, 0.1);
