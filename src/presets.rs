@@ -63,7 +63,7 @@ pub struct EngineSpec {
     pub mix: f32,        // mixture ratio the throttle valves hold (0: the layout's own rule)
     pub t_gg: f32,       // turbine drive gas temperature the powerhead maker sizes the generator for, K
     pub tapoff: bool,    // tap-off cycle: no generator, the turbine runs on hot gas ducted from the main chamber
-    pub twin_noz: f32,   // one chamber, two nozzles: each nozzle's centre line this many cells either side of the engine's (0: one nozzle)
+    pub twin_noz: f32,   // one chamber, two nozzles: each nozzle's centre line this many cells either side of the chamber's (0: one nozzle)
 }
 
 /// Where a layout wants its propellants delivered: the columns (two cells wide) of its fuel and oxidiser inlet pipes at
@@ -79,6 +79,11 @@ pub struct Feeds {
 }
 
 type Rect = (i32, i32, i32, i32);
+
+/// Half width of a twin-nozzle engine's combustion chamber, cells.
+const TWIN_CHAMBER_HW: f32 = 15.0;
+/// The last row of its side ducts.
+const TWIN_DUCT_Y1: i32 = 81;
 
 
 pub fn presets() -> Vec<EngineSpec> {
@@ -443,18 +448,18 @@ pub fn presets() -> Vec<EngineSpec> {
         cartridge_w: 1.5e7,
         ..kerolox.clone()
     };
-    // One chamber, two nozzles: a wide combustion chamber whose floor is split by a cooled wedge into two throats, each with
-    // its own bell. One turbopump and one injector head feed both.
+    // One chamber, two nozzles: a small combustion chamber with a hot-gas duct out of each side, each duct turning down
+    // into its own throat and bell.
     let twin_nozzle = EngineSpec {
         name: "Twin-nozzle engine",
-        blurb: "One combustion chamber, two nozzles: a wide chamber whose floor is split by a regen-cooled wedge into two throats, each with its own bell, on RP-1/LOX. One gas-generator turbopump from the powerhead maker and one injector head (fuel and oxidiser from alternate injectors right across the face) feed both. Two small bells in place of one big one make a shorter engine for the same thrust",
-        twin_noz: 35.0,
-        ch_hw: 37.0,
-        conv_start: 68.0, // (a long, gentle convergence: any steeper and the cooling jacket's cells no longer touch row to row)
-        throat_y: 122.0,
-        throat_hw: 6.0,
-        exit_y: 225.0,
-        exit_hw: 26.0,
+        blurb: "One combustion chamber, two nozzles: a small chamber under one injector head, a hot-gas duct out of each side, and each duct turning down into its own throat and bell, on RP-1/LOX. The chamber, the ducts and both nozzles are regen-cooled as one jacket. One gas-generator turbopump from the powerhead maker feeds it",
+        twin_noz: 40.0,
+        ch_hw: 10.0, // (the half width of each duct's down leg)
+        conv_start: 90.0,
+        throat_y: 101.0,
+        throat_hw: 7.0,
+        exit_y: 168.0,
+        exit_hw: 20.0,
         target_pc: 6.0e6,
         mix: 2.36,
         ..kerolox.clone()
@@ -994,6 +999,71 @@ impl World {
         self.rect(gx, ey + 2, dx0 + 3, ey + 4, c::EMPTY);
     }
 
+    /// One chamber, two nozzles: a small chamber under the injector head, a duct out of each side, each duct turning down a
+    /// leg into its own throat and bell (the legs and nozzles follow the engine's usual contour about centre lines
+    /// `twin_noz` cells either side). The gas path is laid out first; every cell within two of it is liner, the next two the
+    /// cooling jacket, the next two the steel shell, so the chamber, ducts and nozzles share one jacket, joined to the fuel
+    /// manifolds at the head and fed from the ring at the bottom of the bells.
+    fn twin_nozzle_walls(&mut self, e: &EngineSpec, hw: &dyn Fn(f32) -> f32) {
+        let (cx, off) = (128.0f32, e.twin_noz);
+        let cw = TWIN_CHAMBER_HW;
+        let (y_floor, yd0, yd1) = (91i32, 64i32, TWIN_DUCT_Y1); // chamber floor; the ducts' top and bottom rows
+        let ey = e.exit_y as i32;
+        let gas = |x: i32, y: i32| -> bool {
+            let dx = (x as f32 + 0.5 - cx).abs();
+            // the chamber, its floor chamfered in at the corners (and carried up through the head, so its walls reach it)
+            if (54..=y_floor).contains(&y) && dx < cw - (y - (y_floor - 6)).max(0) as f32 {
+                return true;
+            }
+            // a duct out of each side, as far as the middle of its leg
+            if (yd0..=yd1).contains(&y) && dx < off {
+                return true;
+            }
+            // the legs, throats and bells
+            (yd0..=ey).contains(&y) && (dx - off).abs() < hw(y as f32 + 0.5)
+        };
+        let (l1, l2, l3) = (e.liner as i32, (e.liner + e.jacket) as i32, (e.liner + e.jacket + e.shell) as i32);
+        for y in 58..=ey {
+            for x in 16..240i32 {
+                if gas(x, y) {
+                    continue;
+                }
+                // how many cells from the gas, square rings out to the shell's thickness
+                let mut d = l3 + 1;
+                'near: for r in 1..=l3 {
+                    for q in -r..=r {
+                        if gas(x + q, y - r) || gas(x + q, y + r) || gas(x - r, y + q) || gas(x + r, y + q) {
+                            d = r;
+                            break 'near;
+                        }
+                    }
+                }
+                let v = if d <= l1 {
+                    e.liner_mat
+                } else if d <= l2 {
+                    c::PIPE
+                } else if d <= l3 {
+                    c::STEEL
+                } else {
+                    continue;
+                };
+                self.cells[World::idx(x as usize, y as usize)] = v;
+            }
+        }
+        // injector head over the chamber: cap, oxidiser manifold in the middle, fuel manifolds either side (out over the
+        // jacket, which comes up into them), injectors across the chamber
+        let (x0, x1) = ((cx - cw) as i32 - l3, (cx + cw) as i32 + l3 - 1);
+        self.rect(x0, 58, x1, 59, c::STEEL);
+        for x in x0..=x1 {
+            let d = (x as f32 + 0.5 - cx).abs();
+            let (m, inj) = if d < 5.0 || d >= 6.0 { (c::PIPE, c::INJ) } else { (c::STEEL, c::STEEL) };
+            self.cells[World::idx(x as usize, 60)] = m;
+            if d < cw {
+                self.cells[World::idx(x as usize, 61)] = inj;
+            }
+        }
+    }
+
     /// An expander-cycle engine: turbopumps, a cooling jacket, and nothing else to drive them.
     fn is_expander(e: &EngineSpec) -> bool {
         !e.gg && !e.electric && !e.tapoff && !e.plug && e.fuel_tp.is_some() && e.ox_tp.is_some() && e.jacket > 0.0
@@ -1224,6 +1294,14 @@ impl World {
             let (i0, i1) = (2 * (128 - off as i32) - 1 - tx, tx + 2 * off as i32);
             self.rect(i0, yf, i1, yf + 1, c::PIPE);
             self.rect(127, yf, 128, yf + 1, c::JOINT);
+            // (the jackets up the insides of the bells meet under the chamber and would end there, the ducts being in the
+            // way: a line behind each duct takes that fuel on up to the head)
+            let (jd, jy) = ((TWIN_CHAMBER_HW + e.liner) as i32, TWIN_DUCT_Y1 + 1 + e.liner as i32);
+            for x in [128 - jd - 2, 128 + jd] {
+                self.rect(x, jy, x + 1, jy + 1, c::JOINT);
+                self.rect(x, 60, x + 1, 60, c::JOINT);
+                back.push((x, 60, x + 1, jy + 1));
+            }
         }
         let mt = 255 - tx;
         self.rect(mt, yf, mt + 3, yf + 1, c::PIPE);
@@ -1998,13 +2076,13 @@ impl World {
             None
         };
         if !e.plug {
-        // (two nozzles: the same contour about each nozzle's own centre line. Where the two overlap, at the top, they are
-        // one chamber; below, the wall between them is the wedge that splits the flow, lined and jacketed like the rest)
-        let off = e.twin_noz;
+        if e.twin_noz > 0.0 {
+            self.twin_nozzle_walls(e, &hw);
+        } else {
         for y in 58..=e.exit_y as usize {
             let h = hw(y as f32 + 0.5);
             for x in 0..W {
-                let d = ((x as f32 + 0.5 - cx).abs() - off).abs();
+                let d = (x as f32 + 0.5 - cx).abs();
                 let v = if d < h {
                     c::EMPTY
                 } else if d < h + l1 {
@@ -2020,21 +2098,10 @@ impl World {
             }
         }
         // injector head: cap, oxidiser manifold in the middle, fuel manifolds either side
-        let ext = if off > 0.0 { (off + e.ch_hw - 22.0) as i32 } else { 0 }; // (a twin-nozzle chamber is that much wider each side)
-        self.rect(100 - ext, 58, 155 + ext, 59, c::STEEL);
-        for x in (100 - ext) as usize..=(155 + ext) as usize {
+        self.rect(100, 58, 155, 59, c::STEEL);
+        for x in 100..=155usize {
             let d = (x as f32 + 0.5 - cx).abs();
             let left = (x as f32 + 0.5) < cx;
-            if off > 0.0 {
-                // one wide chamber: the oxidiser manifold in the middle, fuel either side as usual, and under them a row
-                // of alternating injectors right across the face, so fuel and oxidiser meet everywhere and not just in
-                // the middle of a chamber this wide
-                self.cells[World::idx(x, 60)] = if d < 5.0 || d >= 6.0 { c::PIPE } else { c::STEEL };
-                if d < off + e.ch_hw {
-                    self.cells[World::idx(x, 61)] = c::AINJ;
-                }
-                continue;
-            }
             let (m, inj) = if d < 5.0 {
                 (c::PIPE, c::INJ)
             } else if d < 6.0 {
@@ -2050,6 +2117,7 @@ impl World {
             if d < e.ch_hw {
                 self.cells[World::idx(x, 61)] = inj;
             }
+        }
         }
         }
         let mut feeds = Feeds::default();

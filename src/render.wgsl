@@ -1131,7 +1131,12 @@ fn fs(in: VOut) -> @location(0) vec4<f32> {
         let twin_axis = (anim[A_PLUME + 17u] - f32(pflags)) / 16.0;
         let folded = (pflags & 4u) != 0u && cf.x > twin_axis;
         let cfx = vec2<f32>(select(cf.x, 2.0 * twin_axis - cf.x, folded), cf.y);
-        let pl = plume(cfx);
+        var pl = plume(cfx);
+        // (above the exits, between the two nozzles, is the rest of the engine, its chamber and ducts with it: none of the
+        // plume's own shading belongs over the gas there)
+        if ((pflags & 4u) != 0u && cf.y < anim[A_PLUME + 2u] && cfx.x > anim[A_PLUME + 1u] + anim[A_PLUME + 3u]) {
+            pl = vec4<f32>(0.0);
+        }
         // an aerospike: the plume shader draws the exhaust below the base of the spike, so the simulation's own gas there (the
         // wide, billowing wake) is hidden under it
         if (anim[A_PLUME] > 0.5 && (pflags & 2u) != 0u && anim[A_PLUME + 8u] > 0.03) {
