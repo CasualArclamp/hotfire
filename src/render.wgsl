@@ -194,10 +194,15 @@ fn flame(i: u32, ix: u32, iy: u32, rho: f32, T: f32, vel: vec2<f32>, cf: vec2<f3
     let across = dot(cf, vec2<f32>(-dir.y, dir.x));
     // the flame texture races along the flow: fast gas crosses the screen in about a tenth of a second
     let tt = r.time - 60.0 * floor(r.time / 60.0);
-    let drift = tt * (2500.0 + 5500.0 * clamp(sp / 3000.0, 0.0, 1.5));
+    // (one speed for the whole picture, set by the exhaust leaving the nozzle. Timing each cell's texture by its own gas
+    // speed looks right for a moment, but two neighbouring cells a percent apart in speed are a whole pattern apart
+    // within seconds, and the flame turns to snow.)
+    let drift = tt * (2500.0 + 5500.0 * clamp(anim[A_PLUME + 4u] / 3000.0, 0.0, 1.5));
     // long licking tongues (stretched along the flow) with finer flicker on top
-    let blob = fbm(vec2<f32>(across * 0.35, (along - drift) * 0.025));
-    let fine = fbm(vec2<f32>(across * 0.9 + 7.0, (along - drift * 1.4) * 0.07));
+    // (kept coarser than a cell across the flow: the noise has detail down to a quarter of its scale, and anything
+    // finer than a cell draws as hairlines along the streamlines)
+    let blob = fbm(vec2<f32>(across * 0.09, (along - drift) * 0.025));
+    let fine = fbm(vec2<f32>(across * 0.2 + 7.0, (along - drift * 1.4) * 0.07));
     let tongues = 0.65 * blob + 0.35 * fine;
     em = em * (0.2 + 1.2 * tongues);
     // shock diamonds still light up where the gas compresses
