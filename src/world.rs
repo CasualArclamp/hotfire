@@ -3260,8 +3260,12 @@ impl World {
         if rb.valid {
             let s = rb.state[Self::idx((l + r) / 2, y)];
             let rho = s[0].max(1e-6);
-            pe = gas_p(s, pr.gamma);
-            let t = pe / (rho * pr.rgas);
+            // (the pressure is the mean across the exit, not the centre line's: the middle of a bell's exit is the most
+            // expanded part of it, well below the gas nearer the walls, and going by it alone the plume is drawn matched
+            // to the air when the jet is really blooming out)
+            pe = (l..=r).map(|x| gas_p(rb.state[Self::idx(x, y)], pr.gamma)).sum::<f32>() / (r - l + 1) as f32;
+            let p_mid = gas_p(s, pr.gamma);
+            let t = p_mid / (rho * pr.rgas);
             speed = (s[1] * s[1] + s[2] * s[2]).sqrt() / rho;
             mach = speed / (pr.gamma * pr.rgas * t.max(50.0)).sqrt();
         }
