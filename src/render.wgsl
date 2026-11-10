@@ -1125,10 +1125,16 @@ fn fs(in: VOut) -> @location(0) vec4<f32> {
     }
     // the hot gas a burner block sends out of its outlet
     if ((r.mode == 6u || r.mode == 0u) && (mat[i] & 255u) == 0u) {
-        let pl = plume(cf);
+        // one chamber, two nozzles: the world follows the left-hand nozzle, and the other is its mirror image about the
+        // engine's centre line. cfx is this pixel as the left-hand nozzle would see it.
+        let pflags = u32(anim[A_PLUME + 17u] + 0.5) & 15u;
+        let twin_axis = (anim[A_PLUME + 17u] - f32(pflags)) / 16.0;
+        let folded = (pflags & 4u) != 0u && cf.x > twin_axis;
+        let cfx = vec2<f32>(select(cf.x, 2.0 * twin_axis - cf.x, folded), cf.y);
+        let pl = plume(cfx);
         // an aerospike: the plume shader draws the exhaust below the base of the spike, so the simulation's own gas there (the
         // wide, billowing wake) is hidden under it
-        if (anim[A_PLUME] > 0.5 && anim[A_PLUME + 17u] > 1.5 && anim[A_PLUME + 8u] > 0.03) {
+        if (anim[A_PLUME] > 0.5 && (pflags & 2u) != 0u && anim[A_PLUME + 8u] > 0.03) {
             let hws = max(anim[A_PLUME + 3u], 3.0);
             let sps = cf.y - anim[A_PLUME + 2u];
             let wide = 3.0 * hws + 0.45 * max(sps, 0.0);
@@ -1136,7 +1142,7 @@ fn fs(in: VOut) -> @location(0) vec4<f32> {
             col = col * (1.0 - 0.97 * mk);
         }
         col = col * (1.0 - 0.95 * pl.a) + pl.rgb;
-        let pc = purge_cloud(cf);
+        let pc = purge_cloud(cfx);
         col = mix(col, pc.rgb, pc.a);
         // TEA-TEB burns green: a flash round the injector it sprays into
         let tea_k = anim[A_TEA + 2u];
@@ -1172,10 +1178,11 @@ fn fs(in: VOut) -> @location(0) vec4<f32> {
             let s = cf.y - ye;
             let sp = max(s, 0.0);
             let widen = 1.0 + spread * sp / hw;
-            let ax = (cf.x - xc) / widen;
+            let ax = (cfx.x - xc) / widen;
             let reach = hw * (0.6 + 0.4 * spread) + 4.0;
             if (s >= -1.0 && s < reach && abs(ax) < hw) {
-                let ex = exit_gas(cf, xc + ax, ye);
+                // (sampled at the real column: the mirrored nozzle's own gas)
+                let ex = exit_gas(cf, select(xc + ax, 2.0 * twin_axis - (xc + ax), folded), ye);
                 // (fading from the exit plane on, with no plateau, so where the exit gas is dark (the cooler,
                 // thinner middle of an over-expanded jet) the plume's core comes up through it gradually)
                 let k = ex.w * pow(1.0 - sp / reach, 2.0) * smoothstep(hw, 0.8 * hw, abs(ax));
@@ -1186,7 +1193,7 @@ fn fs(in: VOut) -> @location(0) vec4<f32> {
         // and the plume, burns green and white-hot before it settles to its own colour, as a Merlin's does. (This
         // tints whatever is drawn, so it works in the full-simulation view too; the plume geometry is only used to find the engine.)
         let gk = clamp(anim[A_PLUME + 11u] * 1.3, 0.0, 1.0);
-        if (gk > 0.01 && anim[A_PLUME + 3u] > 0.5 && abs(cf.x - anim[A_PLUME + 1u]) < 8.0 * max(anim[A_PLUME + 3u], 3.0)) {
+        if (gk > 0.01 && anim[A_PLUME + 3u] > 0.5 && abs(cfx.x - anim[A_PLUME + 1u]) < 8.0 * max(anim[A_PLUME + 3u], 3.0)) {
             let lum = clamp(dot(col, vec3<f32>(0.35, 0.5, 0.15)) * 1.3, 0.0, 1.6);
             let green = vec3<f32>(0.1, 1.0, 0.28) * lum + vec3<f32>(0.5, 1.0, 0.65) * pow(lum, 3.0) * 0.4;
             col = mix(col, green, gk * smoothstep(0.04, 0.35, lum));

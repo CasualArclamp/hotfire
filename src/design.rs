@@ -223,6 +223,21 @@ impl World {
                 no += w;
             }
         }
+        // alternating injectors are not part of either line: every other cell of a block is a fuel injector (the even ones,
+        // as the simulation shares them out) and the rest oxidiser
+        for i in 0..N {
+            if self.cells[i] == c::AINJ {
+                let (x, y) = (i % W, i / W);
+                let open = [(x, y + 1), (x, y.wrapping_sub(1)), (x.wrapping_sub(1), y), (x + 1, y)].into_iter().any(|(nx, ny)| nx < W && ny < H && self.cells[World::idx(nx, ny)] == c::EMPTY);
+                if open {
+                    if (x + y) % 2 == 0 {
+                        nf += st.inj_w(x);
+                    } else {
+                        no += st.inj_w(x);
+                    }
+                }
+            }
+        }
         // injectors take a stiff 25% pressure drop; the turbopumps then settle at whatever speed gives that head
         let dp = 0.25 * pc;
         // the governor holds pump discharge at the design feed pressure, not the hardware limit
@@ -1548,6 +1563,36 @@ he_setpoint 2500000
             run(&mut w, 0.1);
             assert!(w.plume[0] > 0.5 && (w.plume[2] - exit_y).abs() < 1.0, "preset {k}: exit row {} after the hole, {exit_y} before", w.plume[2]);
         }
+    }
+
+    #[test]
+    fn twin_nozzle_engine_is_one_chamber_feeding_two_nozzles() {
+        let mut w = World::new();
+        w.load_preset(15);
+        open_all(&mut w);
+        run(&mut w, 4.0);
+        // one injector face of alternating injectors, half its cells on each line, every one of them reached by its line
+        let (f, o) = (w.nets.iter().find(|n| n.prop == 0 && !n.injectors.is_empty()).unwrap(), w.nets.iter().find(|n| n.prop == 1 && !n.injectors.is_empty()).unwrap());
+        assert_eq!(f.injectors.len(), o.injectors.len());
+        assert!(f.injectors.len() > 50, "{} fuel injectors", f.injectors.len());
+        for n in [f, o] {
+            let bad: Vec<(usize, f32)> = n.injectors.iter().filter(|&&(i, _)| w.cells[i] != c::AINJ || w.phase[i] > n.max_phase + 1.0).map(|&(i, _)| (i % W, w.phase[i])).collect();
+            assert!(bad.is_empty(), "injectors their line (prop {}, reach {}) cannot get to: {:?}", n.prop, n.max_phase, &bad[..bad.len().min(6)]);
+        }
+        assert!(w.mixed.is_none());
+        // the plume finder follows the left-hand nozzle down past the wedge and reports the engine's centre line, about which
+        // the second plume is drawn as its mirror image
+        assert!(w.plume[0] > 0.5, "nozzle exit found");
+        let flags = w.plume[17] as u32 & 15;
+        let axis = (w.plume[17] - flags as f32) / 16.0;
+        assert_eq!(flags & 4, 4, "two nozzles");
+        let centre = crate::presets::PRESET_OX as f32 + 128.0;
+        assert!((axis - centre).abs() < 1.0, "axis {axis}, engine centre {centre}");
+        assert!(w.plume[1] < axis - 20.0 && w.plume[3] > 20.0 && w.plume[3] < 32.0, "left nozzle at {} half width {}", w.plume[1], w.plume[3]);
+        // a one-nozzle engine has no such flag
+        w.load_preset(2);
+        run(&mut w, 0.1);
+        assert_eq!(w.plume[17] as u32 & 4, 0);
     }
 
     #[test]

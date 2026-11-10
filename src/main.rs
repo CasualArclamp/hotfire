@@ -3697,6 +3697,12 @@ fn selftest(seconds: f32, shot: Option<String>, args: &[String]) {
             );
         }
     }
+    if args.iter().any(|a| a == "--nets") {
+        println!("mixed: {:?}", w.mixed.map(|(i, _)| (i % W, i / W)));
+        for (k, n) in w.nets.iter().enumerate() {
+            println!("net {k}: prop {} tank cells {} lines {} injectors {} valves {} front {:.0}/{:.0}", n.prop, n.tank_cells, n.lines.len(), n.injectors.len(), n.valves.len(), n.front, n.max_phase);
+        }
+    }
     println!("events: {:?}", w.events);
     if args.iter().any(|a| a == "--stand") {
         let m = stand::metrics(&stand.run);
