@@ -535,6 +535,13 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
         let amp6 = clamp(0.05 + 0.5 * abs(log(Dj / De)), 0.04, 0.4) * exp(-sp / (3.0 * Ls)) * (1.0 - 0.5 * sep) * mix(0.2, 1.0, ue) * (1.0 - 0.92 * bloom);
         R = max(Rb * (1.0 + amp6 * sin(ph)), 0.3 * hwj);
     }
+    // Thin air and vacuum: past about three times the air's pressure the exhaust no longer just swells, it fans out from
+    // the lip of the nozzle, wider the thinner the air (the expansion turns the edge of the jet outward: some 45 degrees at
+    // 30 km, more in a vacuum), as the simulated jet does
+    let fan_a = clamp(0.25 * (lr - 1.2), 0.0, 1.1);
+    let Lfan = 7.0 * hw;
+    let Rcore = R; // (the dense middle of the jet keeps to about this width: it is what stays bright)
+    R = R + tan(fan_a) * Lfan * (1.0 - exp(-sp / Lfan));
     // turbulence: big slow eddies swing the plume sideways (more the further out), smaller ones tear its edge
     let tt = r.time - 60.0 * floor(r.time / 60.0);
     let drift = tt * (2500.0 + 6500.0 * fast);
@@ -573,6 +580,8 @@ fn plume(cf: vec2<f32>) -> vec4<f32> {
     // (style 6 has no white axis or hot core: between the diamonds the jet is a dim, translucent pink)
     var col = c_body * body * 0.85 + c_core * core * 0.8 * (0.4 + 0.6 * kindle) * select(1.0, 0.12, style == 6) + c_white * axis * select(1.0, 0.0, style == 6);
     col = col * speck * (0.08 + 0.92 * dec);
+    // (fanned out, the thin outer exhaust is faint; the core of the jet still glows down the middle of it)
+    col = col + c_body * exp(-pow(abs(dx) / (0.8 * Rcore), 2.0)) * 0.7 * (0.15 + 0.85 * dec) * smoothstep(0.0, 0.35, fan_a);
     // Shock diamonds, stronger the further the exit pressure is from the air's. Six ways of drawing them (see
     // world::PLUME_STYLES): sh is the white-hot light, shl the fainter light along the shock lines themselves, bodyk how
     // much of the plume's body shows (a darker body lets the diamonds stand out).
