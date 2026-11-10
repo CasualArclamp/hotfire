@@ -1,3 +1,6 @@
+// A windowed program on Windows: no console window opens behind the game. (Debug builds keep the console, for panics.)
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod design;
 mod powerhead;
 mod undo;
@@ -3820,8 +3823,28 @@ fn window_viewport() -> egui::ViewportBuilder {
     vp
 }
 
+/// With no console of its own, a run from a terminal with developer switches (--selftest and the like) still prints
+/// there: join the console of whatever started the program, if it has one. Output piped to a file or another program
+/// needs nothing.
+#[cfg(windows)]
+fn attach_parent_console() {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn AttachConsole(process_id: u32) -> i32;
+    }
+    const ATTACH_PARENT_PROCESS: u32 = 0xFFFF_FFFF;
+    unsafe {
+        AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+}
+#[cfg(not(windows))]
+fn attach_parent_console() {}
+
 fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().collect();
+    if args.len() > 1 {
+        attach_parent_console();
+    }
     if let Some(p) = args.iter().position(|a| a == "--selftest") {
         let secs = args.get(p + 1).and_then(|s| s.parse().ok()).unwrap_or(20.0);
         let shot = args.get(p + 2).filter(|s| !s.starts_with("--")).cloned();

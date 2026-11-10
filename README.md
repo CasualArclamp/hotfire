@@ -114,6 +114,9 @@ section for making a single exe to hand around.
 
 (The cargo package, and so the exe, is still called `rocket_sandbox`.)
 
+On Windows the release exe is a windowed program: no console window opens behind it. Run from a terminal with a
+developer switch it prints to that terminal, and its output can be piped as before. Debug builds keep a console.
+
 ```
 cargo run --release                                  # the game
 cargo run --release -- --selftest 20 shots/run       # headless: run 20 s, print gauges, save PNGs
