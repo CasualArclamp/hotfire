@@ -619,7 +619,11 @@ pub fn build_with(s: &PhSize, burner: bool, ox_valves: bool) -> (Clip, Vec<Port>
         }
         b.rect(x_end, cy - 1, xt - 1, *cy, c::SHAFT);
         // casing over the wheel's two ends: the gas gets in and out only through the nozzle above and the outlet below
-        if !s.input.expander {
+        if s.input.expander {
+            // (an expander's wheel has no gas round it, but it still sits in a casing: a cell of steel all round, with the
+            // fuel line coming in through the top and out of the bottom)
+            steel(&mut b, xt - 1, cy - lo(*dt) - 1, xt + lt, cy - lo(*dt) + dt);
+        } else {
             steel(&mut b, xt - 2, cy - lo(*dt), xt - 1, cy - lo(*dt) + dt - 1);
             steel(&mut b, xt + lt, cy - lo(*dt), xt + lt + 1, cy - lo(*dt) + dt - 1);
         }
