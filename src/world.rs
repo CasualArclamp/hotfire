@@ -3511,7 +3511,11 @@ impl World {
         noz.clear();
         self.plume = self.find_plume(rb, &mut noz);
         self.noz = noz;
-        self.plume[10] = self.purge_vis;
+        // (the white vapour is a cryogenic engine's: its purge and chill-down gas is cold enough to fog the air. A storable
+        // engine's purge is room-temperature gas, and next to nothing shows)
+        let pr = self.st.p();
+        let cryo = pr.boil_f[0] > 0.0 || pr.boil_o[0] > 0.0;
+        self.plume[10] = self.purge_vis * if cryo { 1.0 } else { 0.2 };
         self.plume[13] = self.fx_style as f32;
         self.stab_geom = self.find_stab_geom();
         // how hard the engine is running: chamber pressure against its recent peak (about the flow, and so the thrust)

@@ -738,9 +738,12 @@ fn exit_gas(cf: vec2<f32>, xs: f32, ye: f32) -> vec4<f32> {
     return vec4<f32>(bell_tint(c, 1.0), n / 3.0);
 }
 
-// The cold-gas purge at the start: before the fuel valves open, inert gas at room temperature is blown through the
-// injectors and out of the bell. Cold, it condenses the air's moisture into a white cloud that spreads wide as it
-// leaves the nozzle and billows downwards. rgb is the cloud's colour, a is how much of the old picture it covers.
+// The purge at the start: before the fuel valves open, gas is blown through the injectors and out of the bell, and on a
+// cryogenic engine the lines and the injector are being chilled down too, so what comes out is cold. It condenses the
+// air's moisture into a white vapour that pours out of the nozzle slowly, heavier than the air: a soft, translucent
+// stream down the middle of the bell, spilling over the rim and sinking in rolling billows that thin away within a few
+// exit diameters. It is fog, not a jet: slow, soft-edged, and you can see the engine through it. rgb is the vapour's
+// colour, a is how much of the old picture it covers.
 fn purge_cloud(cf: vec2<f32>) -> vec4<f32> {
     let vis = anim[A_PLUME + 10u];
     if (anim[A_PLUME] < 0.5 || vis < 0.02) { return vec4<f32>(0.0); }
@@ -750,31 +753,41 @@ fn purge_cloud(cf: vec2<f32>) -> vec4<f32> {
     let s = cf.y - ye;
     let dx = cf.x - xc;
     let tt = r.time - 60.0 * floor(r.time / 60.0);
+    // (billows: the noise is bent by a slower, larger copy of itself, which rolls its lumps over like cauliflower)
+    let sc = 1.0 / (hw + 20.0);
+    let fall = tt * 55.0; // cells a second: it drifts down, it does not rush
+    let warp = vec2<f32>(fbm(vec2<f32>(dx * sc * 1.3 + 3.1, (cf.y - fall * 0.5) * sc * 1.3)), fbm(vec2<f32>(dx * sc * 1.3 - 7.7, (cf.y - fall * 0.5) * sc * 1.3 + 4.2))) - vec2<f32>(0.5);
+    let pb = vec2<f32>(dx * sc * 2.6, (cf.y - fall) * sc * 2.2) + warp * 1.6;
+    let n = fbm(pb);
+    let wisp = fbm(pb * 2.3 + vec2<f32>(11.0, -fall * sc * 1.1));
+    let white = vec3<f32>(0.95, 0.97, 1.0);
+    let shade = vec3<f32>(0.68, 0.76, 0.9);
     if (s < 0.0) {
-        // inside the engine: the purge gas filling the chamber and bell, white and streaming down the passage
+        // inside the engine: a thin stream down the passage, thickest along the middle, the walls showing through it
         // (the rows of the passage come from the world: the gas there is moving too slowly to show up on its own)
         let k = i32(floor(cf.y - anim[A_PLUME + 12u]));
         if (k < 0 || k >= 420) { return vec4<f32>(0.0); }
         let wl = anim[A_NOZ + u32(k) * 2u];
         let wr = anim[A_NOZ + u32(k) * 2u + 1u];
         if (cf.x < wl || cf.x > wr + 1.0) { return vec4<f32>(0.0); }
-        let ns = fbm(vec2<f32>(dx * 0.12, (cf.y - tt * 500.0) * 0.03));
-        let dn = 0.55 + 0.7 * ns;
-        let ci = mix(vec3<f32>(0.6, 0.7, 0.88), vec3<f32>(0.97, 0.98, 1.0), smoothstep(0.3, 1.0, dn)) * (0.75 + 0.35 * ns);
-        return vec4<f32>(ci, clamp(dn, 0.0, 0.88) * vis);
+        let half = max(0.5 * (wr + 1.0 - wl), 1.0);
+        let u = (cf.x - 0.5 * (wl + wr + 1.0)) / half;
+        let stream = exp(-pow(u / 0.62, 2.0));
+        let edge = smoothstep(1.0, 0.82, abs(u)); // (soft against the wall)
+        let dn = (0.16 + 0.5 * stream) * (0.45 + 1.0 * n) * (0.75 + 0.5 * wisp) * edge;
+        let ci = mix(shade, white, smoothstep(0.05, 0.35, dn));
+        return vec4<f32>(ci, clamp(dn, 0.0, 0.62) * vis);
     }
-    let sp = max(s, 0.0);
-    // (wide and soft: the gas is slow and cold, so it spreads instead of streaking like the exhaust)
-    let R = hw * (0.9 + 0.55 * sqrt(sp / hw)) + 0.22 * sp;
-    let n1 = fbm(vec2<f32>(dx * 0.05, (sp - tt * 240.0) * 0.028));
-    let n2 = fbm(vec2<f32>(dx * 0.13 + 5.0, (sp - tt * 380.0) * 0.07));
-    let n = 0.6 * n1 + 0.4 * n2;
-    let q = abs(dx) / R * (1.0 + (n - 0.5) * 0.9);
-    let dens = smoothstep(1.05, 0.1, q) * exp(-sp / (4.2 * hw)) * (0.4 + 1.0 * n);
+    // below the exit: spilling over the rim, sinking and spreading gently, its edge rolling
+    let R = hw * (1.0 + 0.3 * sqrt(s / hw)) + 0.09 * s;
+    let q = abs(dx) / R * (1.0 + (n - 0.5) * 0.75);
+    // (it grows down from the nozzle as the purge comes on, and thins from the far end)
+    let reach = 3.6 * hw * (0.25 + 0.75 * vis);
+    let dens = smoothstep(1.0, 0.2, q) * exp(-pow(s / reach, 1.6)) * (0.4 + 0.95 * n) * (0.7 + 0.55 * wisp);
     // (it is the air's moisture condensing on the cold gas, so in thin air or vacuum only a faint haze of the gas itself is left)
     let moist = mix(0.2, 1.0, clamp(anim[A_AIR + 1u] * 4.0, 0.0, 1.0));
-    let a = clamp(dens * 1.25, 0.0, 0.92) * vis * moist * smoothstep(-2.0, 2.0, s);
-    let c = mix(vec3<f32>(0.55, 0.66, 0.84), vec3<f32>(0.97, 0.98, 1.0), smoothstep(0.15, 0.7, dens)) * (0.6 + 0.5 * n);
+    let a = clamp(dens * 1.15, 0.0, 0.86) * vis * moist * smoothstep(-2.0, 3.0, s);
+    let c = mix(shade, white, smoothstep(0.04, 0.32, dens)) * (0.93 + 0.14 * n);
     return vec4<f32>(c, a);
 }
 
