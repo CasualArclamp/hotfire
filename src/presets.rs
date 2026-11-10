@@ -80,6 +80,9 @@ pub struct Feeds {
 
 type Rect = (i32, i32, i32, i32);
 
+/// A start cartridge keeps this many cells of gas path clear of a turbine wheel's faces.
+const CART_CLEAR: u32 = 20;
+
 /// Half width of a twin-nozzle engine's combustion chamber, cells.
 const TWIN_CHAMBER_HW: f32 = 15.0;
 /// The last row of its side ducts.
@@ -1679,6 +1682,33 @@ impl World {
         if shafts.is_empty() {
             return false;
         }
+        // the way in and out of the turbines: the open cells at the wheels' faces and the gas path on from them, a good way
+        // past the end of the exhaust duct. A canister there would stand in the turbine's own exhaust.
+        let mut lane = vec![false; N];
+        let mut ql: VecDeque<(usize, u32)> = VecDeque::new();
+        for s in self.shafts.iter() {
+            for &i in &s.turb_faces {
+                if self.cells[i] == c::EMPTY && !lane[i] {
+                    lane[i] = true;
+                    ql.push_back((i, 0));
+                }
+            }
+        }
+        while let Some((i, d)) = ql.pop_front() {
+            if d >= CART_CLEAR {
+                continue;
+            }
+            let (x, y) = (i % W, i / W);
+            for (nx, ny) in [(x + 1, y), (x.wrapping_sub(1), y), (x, y + 1), (x, y.wrapping_sub(1))] {
+                if nx < W && ny < H {
+                    let j = World::idx(nx, ny);
+                    if self.cells[j] == c::EMPTY && !lane[j] {
+                        lane[j] = true;
+                        ql.push_back((j, d + 1));
+                    }
+                }
+            }
+        }
         let per = (total / shafts.len()).max(4);
         let mut rotor = vec![false; N];
         for sh in &shafts {
@@ -1704,7 +1734,7 @@ impl World {
                         'rect: for yy in ry..ry + h {
                             for xx in rx..rx + w {
                                 let i = World::idx(xx as usize, yy as usize);
-                                if !outside[i] {
+                                if !outside[i] || lane[i] {
                                     ok = false;
                                     break 'rect;
                                 }
