@@ -37,6 +37,8 @@ var<private> dtk: f32;
 fn n_tiles() -> u32 { return ((p.w + 7u) / 8u) * ((p.h + 7u) / 8u); }
 fn rate_cur(t: u32) -> f32 { return max(spec_cur[p.w * p.h + n_tiles() + t], 1.0); }
 fn last_cur(t: u32) -> f32 { return spec_cur[p.w * p.h + 2u * n_tiles() + t]; } // the step count its state is up to
+const ASLEEP: f32 = -1.0; // "last ran" of a sleeping tile: up to date whenever it is next looked at
+fn last_or(t: u32, now: f32) -> f32 { let l = last_cur(t); return select(l, now, l < 0.0); }
 fn clock_cur() -> f32 { return spec_cur[p.w * p.h + 3u * n_tiles()]; }
 const CLOCK_WRAP: f32 = 1048576.0;
 const CFL_TILE: f32 = 0.4;
@@ -392,10 +394,18 @@ fn sink_update(x: i32, y: i32, i: u32) {
 }
 
 @compute @workgroup_size(8, 8)
-fn step(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+fn step(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
     let tw = (p.w + 7u) / 8u;
     let th = (p.h + 7u) / 8u;
-    let tile = wid.y * tw + wid.x;
+    // only the blocks (8x8 tiles) with anything going on are dispatched: see plan.wgsl. The list of them
+    // follows the last cell in the material buffer; a row of workgroups is one block, a workgroup one tile.
+    let blk = mat[p.w * p.h + wid.y];
+    let bw = (tw + 7u) / 8u;
+    let tx = (blk % bw) * 8u + (wid.x & 7u);
+    let ty = (blk / bw) * 8u + (wid.x >> 3u);
+    if (tx >= tw || ty >= th) { return; }
+    let gid = vec2<u32>(tx * 8u + lid.x, ty * 8u + lid.y);
+    let tile = ty * tw + tx;
     let nt = tw * th;
     let base = p.w * p.h;
     let now = clock_cur();
@@ -417,8 +427,8 @@ fn step(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(workgroup_id) wi
     }
     // wake if this tile or one around it changed last step; and the rates the tiles around want
     if (li < 9u) {
-        let nx = i32(wid.x) + i32(li % 3u) - 1;
-        let ny = i32(wid.y) + i32(li / 3u) - 1;
+        let nx = i32(tx) + i32(li % 3u) - 1;
+        let ny = i32(ty) + i32(li / 3u) - 1;
         if (nx >= 0 && ny >= 0 && nx < i32(tw) && ny < i32(th)) {
             let nb = u32(ny) * tw + u32(nx);
             if (act_cur(nb)) { atomicStore(&wg_wake, 1u); }
@@ -432,8 +442,8 @@ fn step(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(workgroup_id) wi
         if (atomicLoad(&wg_wake) != 0u) {
             var rate = min(rate_cur(tile), 2.0 * f32(atomicLoad(&wg_nbr)));
             if (atomicLoad(&wg_solid) != 0u) { rate = 1.0; }
-            // steps its state is behind where this step brings everything
-            let since = (now + 1.0 - last_cur(tile) + CLOCK_WRAP) % CLOCK_WRAP;
+            // steps its state is behind where this step brings everything (a tile that was asleep is up to date)
+            let since = (now + 1.0 - last_or(tile, now) + CLOCK_WRAP) % CLOCK_WRAP;
             if (since >= rate || (now + 1.0) % rate == 0.0) {
                 mode = 1u;
                 // catch up, but never more than its rate allows (a wave arriving early costs the calm
@@ -451,11 +461,12 @@ fn step(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(workgroup_id) wi
     }
     let mode = workgroupUniformLoad(&wg_mode);
     if (mode == 0u) {
-        // asleep: both state buffers already agree; it counts as up to date
+        // asleep: both state buffers already agree; it counts as up to date, which a negative "last ran" says
+        // without having to be kept current (a block of sleeping tiles is not visited at all: plan.wgsl)
         if (li == 0u) {
             set_act(tile, false);
             spec_nxt[base + nt + tile] = spec_cur[base + nt + tile];
-            spec_nxt[base + 2u * nt + tile] = (now + 1.0) % CLOCK_WRAP;
+            spec_nxt[base + 2u * nt + tile] = ASLEEP;
         }
         return;
     }
@@ -468,7 +479,7 @@ fn step(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(workgroup_id) wi
         if (li == 0u) {
             set_act(tile, act_cur(tile));
             spec_nxt[base + nt + tile] = spec_cur[base + nt + tile];
-            spec_nxt[base + 2u * nt + tile] = last_cur(tile);
+            spec_nxt[base + 2u * nt + tile] = last_or(tile, now);
         }
         return;
     }

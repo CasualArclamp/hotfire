@@ -134,6 +134,10 @@ pub struct GpuSim {
     pdraw_bg: wgpu::BindGroup,
     frame_no: u32,
     step_pipe: wgpu::ComputePipeline,
+    plan_pipe: wgpu::ComputePipeline,
+    plan_reset_pipe: wgpu::ComputePipeline,
+    plan_bg: wgpu::BindGroup,
+    step_args: wgpu::Buffer, // the solver's indirect dispatch: 64 tiles a block, by the blocks listed
     src_pipe: wgpu::ComputePipeline,
     sim_bg: [wgpu::BindGroup; 2],
     render_pipe: wgpu::RenderPipeline,
@@ -183,6 +187,11 @@ fn buf(device: &wgpu::Device, size: usize, usage: wgpu::BufferUsages, label: &st
 
 /// 8x8-cell tiles for the sleeping-tile optimisation.
 const N_TILES: usize = ((W + 7) / 8) * ((H + 7) / 8);
+/// Blocks of 8x8 tiles: the solver only visits the ones with anything going on (see plan.wgsl).
+const N_BLOCKS: usize = ((W + 63) / 64) * ((H + 63) / 64);
+/// Gas steps between making the list of blocks afresh. Nothing moves more than a cell a step and a
+/// block is 64 cells wide, so the one-block margin around anything going on can't be crossed in this many.
+const PLAN_EVERY: u32 = 16;
 
 pub fn init_state(mat: &[u32], p: &SimParams) -> Vec<[f32; 4]> {
     mat.iter()
@@ -243,7 +252,9 @@ impl GpuSim {
         let sbytes = N * 16;
         let st = U::STORAGE | U::COPY_DST | U::COPY_SRC;
         let state = [buf(device, sbytes, st, "state a"), buf(device, sbytes, st, "state b")];
-        let mat = buf(device, N * 4, U::STORAGE | U::COPY_DST, "mat");
+        // the cell materials, then the list of blocks the solver visits
+        let mat = buf(device, (N + N_BLOCKS) * 4, U::STORAGE | U::COPY_DST, "mat");
+        let step_args = buf(device, 12, U::STORAGE | U::INDIRECT | U::COPY_SRC, "step args");
         let net_t = buf(device, 256 * 4, U::STORAGE | U::COPY_DST, "net_t");
         let flux = buf(device, N * 4, st, "flux");
         // combustible gas per cell, then per tile: awake flag, step rate it wants, when it last ran; then a step counter
@@ -298,6 +309,39 @@ impl GpuSim {
             })
         };
         let sim_bg = [bg(0, 1), bg(1, 0)];
+
+        // the list of blocks to visit
+        let plan_src = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("plan"),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!("plan.wgsl"))),
+        });
+        let plan_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("plan bgl"),
+            entries: &[entry(0, B::Uniform, cs), entry(1, ro, cs), entry(2, ro, cs), entry(3, rw, cs), entry(4, rw, cs)],
+        });
+        let plan_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[Some(&plan_bgl)], immediate_size: 0 });
+        let plan_mk = |name: &str| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(name),
+                layout: Some(&plan_pl),
+                module: &plan_src,
+                entry_point: Some(name),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        let (plan_pipe, plan_reset_pipe) = (plan_mk("plan"), plan_mk("reset"));
+        let plan_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &plan_bgl,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: params.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: spec[0].as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: spec[1].as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: mat.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 4, resource: step_args.as_entire_binding() },
+            ],
+        });
 
         // renderer
         let rshader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -444,6 +488,10 @@ impl GpuSim {
             pdraw_bg,
             frame_no: 0,
             step_pipe,
+            plan_pipe,
+            plan_reset_pipe,
+            plan_bg,
+            step_args,
             src_pipe,
             sim_bg,
             render_pipe,
@@ -584,12 +632,18 @@ impl GpuSim {
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("sim") });
         if inp.steps > 0 {
             let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None, timestamp_writes: None });
-            let gx = (W as u32 + 7) / 8;
-            let gy = (H as u32 + 7) / 8;
-            for _ in 0..inp.steps {
+            for k in 0..inp.steps {
+                // list the blocks with anything going on (the game's own changes this frame are in by now)
+                if k % PLAN_EVERY == 0 {
+                    pass.set_bind_group(0, &self.plan_bg, &[]);
+                    pass.set_pipeline(&self.plan_reset_pipe);
+                    pass.dispatch_workgroups(1, 1, 1);
+                    pass.set_pipeline(&self.plan_pipe);
+                    pass.dispatch_workgroups((N_BLOCKS as u32 + 63) / 64, 1, 1);
+                }
                 pass.set_bind_group(0, &self.sim_bg[self.cur], &[]);
                 pass.set_pipeline(&self.step_pipe);
-                pass.dispatch_workgroups(gx, gy, 1);
+                pass.dispatch_workgroups_indirect(&self.step_args, 0);
                 if inp.params.nsrc > 0 {
                     pass.set_pipeline(&self.src_pipe);
                     pass.dispatch_workgroups((inp.params.nsrc + 63) / 64, 1, 1);
@@ -657,6 +711,18 @@ impl GpuSim {
                 }
             });
         }
+    }
+
+    /// Debugging: how many blocks of tiles the solver visited on the last step, of how many (blocks until the GPU is done).
+    pub fn count_blocks(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> (usize, usize) {
+        let buf = device.create_buffer(&wgpu::BufferDescriptor { label: None, size: 12, usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+        let mut e = device.create_command_encoder(&Default::default());
+        e.copy_buffer_to_buffer(&self.step_args, 0, &buf, 0, 12);
+        queue.submit(Some(e.finish()));
+        buf.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+        let _ = device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None });
+        let v = buf.slice(..).get_mapped_range().expect("mapped");
+        (bytemuck::cast_slice::<u8, u32>(&v)[1] as usize, N_BLOCKS)
     }
 
     /// Debugging: how many 8x8 tiles were awake on the last step (blocks until the GPU is done).

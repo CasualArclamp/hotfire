@@ -3714,6 +3714,8 @@ fn selftest(seconds: f32, shot: Option<String>, args: &[String]) {
     if std::env::var("ROCKET_PROFILE").is_ok() {
         let (a, t, r) = gpu.count_awake(&device, &queue);
         println!("tiles awake: {a} of {t}; tiles wanting step rate 1/2/4/8: {r:?}");
+        let (b, nb) = gpu.count_blocks(&device, &queue);
+        println!("blocks visited: {b} of {nb}");
         println!("per frame: world update {:.2} ms, gpu submit+wait {:.2} ms, read-back {:.2} ms ({} frames)", 1e3 * t_upd / frame.max(1) as f32, 1e3 * t_gpu / frame.max(1) as f32, 1e3 * t_rb / frame.max(1) as f32, frame);
     }
     println!("gas steps: {} total, {:.0} per second ({} cells)", gpu.total_steps, gpu.total_steps as f32 / t0.elapsed().as_secs_f32(), world::N);
