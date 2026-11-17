@@ -5,6 +5,8 @@
 <p align="center"><em>Build it. Light it. Land it.</em><br>
 A liquid rocket engine sandbox: paint an engine cell by cell, plumb it, light it, and watch a real gas simulation do the rest.</p>
 
+<p align="center"><a href="https://github.com/CasualArclamp/hotfire/releases/latest"><img alt="release" src="https://img.shields.io/github/v/release/CasualArclamp/hotfire?logo=github&label=release"></a> <a href="https://github.com/CasualArclamp/hotfire/releases"><img alt="downloads" src="https://img.shields.io/github/downloads/CasualArclamp/hotfire/total?logo=github&label=downloads"></a></p>
+
 <p align="center"><img src="docs/images/hotfire-merlin.gif" width="520" alt="A Merlin-style engine starting up, running at full thrust and shutting down"></p>
 
 Build a liquid-fuel engine the way you would build in The Powder Toy: paint the chamber, throat and bell, run the
