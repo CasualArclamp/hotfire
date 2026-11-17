@@ -4,3 +4,5 @@
 *.bak
 /hotfire/
 *.exe
+# Notes for Claude Code sessions: local only
+CLAUDE.md
